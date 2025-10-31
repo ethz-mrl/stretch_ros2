@@ -14,7 +14,9 @@ from ament_index_python.packages import get_package_share_directory, get_package
 
 def generate_launch_description():
     stretch_core_path = get_package_share_directory('stretch_core')
-    navigation_package = str(get_package_share_path("stretch_nav2"))
+    nav2_bringup_package = str(get_package_share_path("nav2_bringup"))
+    gmapping_package = str(get_package_share_path("slam_gmapping"))
+    okvis_package = str(get_package_share_path("okvis"))
 
     rviz_param = DeclareLaunchArgument('use_rviz', default_value='true', choices=['true', 'false'])
     
@@ -33,18 +35,17 @@ def generate_launch_description():
     rplidar_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([stretch_core_path, '/launch/rplidar.launch.py']))
 
-    print(get_package_share_directory('nav2_bringup'))
     rviz_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource([get_package_share_directory('nav2_bringup'), '/launch/rviz_launch.py']),
+        PythonLaunchDescriptionSource([nav2_bringup_package, '/launch/rviz_launch.py']),
         condition=IfCondition(LaunchConfiguration('use_rviz'))) 
     
     gmapping_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource([get_package_share_directory('slam_gmapping'), '/launch/slam_gmapping.launch.py']))
+        PythonLaunchDescriptionSource([gmapping_package, '/launch/slam_gmapping.launch.py']))
     
     
     okvis_launch = IncludeLaunchDescription(
         XMLLaunchDescriptionSource([
-            os.path.join(get_package_share_directory('okvis'), 'launch', 'okvis_node_realsense.launch.xml')
+            os.path.join(okvis_package, 'launch', 'okvis_node_realsense.launch.xml')
         ]),
         launch_arguments={'rviz': 'false'}.items()
     )
