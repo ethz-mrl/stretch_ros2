@@ -22,8 +22,14 @@ def generate_launch_description():
         sys.exit(1)
 
     stretch_core_path = get_package_share_path('stretch_core')
+    stretch_okvis_path = get_package_share_path('stretch_okvis')
     ld = LaunchDescription()
 
+    declare_okvis_config_arg = DeclareLaunchArgument(
+        'okvis_yaml_file',
+        default_value=str(stretch_okvis_path / 'config' / 'okvis_realsense_D435if.yaml'),
+        description='Path to the calibrated controller args file'
+    )
     declare_broadcast_odom_tf_arg = DeclareLaunchArgument(
         'broadcast_odom_tf',
         default_value='False', choices=['True', 'False'],
@@ -103,6 +109,24 @@ def generate_launch_description():
                           remappings=[('cmd_vel', '/stretch/cmd_vel'),
                                       ('joint_states', '/stretch/joint_states')],
                           parameters=stretch_driver_params)
-    ld.add_action(stretch_driver)
-
-    return ld
+    
+    # for fixed transformation 
+    tf_publisher = LaunchDescription([
+        Node(
+            package='stretch_okvis',  # Replace with your package name
+            executable='tf_publisher',  # Replace with the node's executable name
+            name='tf_publisher',
+            output='screen',
+            parameters=[{'okvis_yaml_file': LaunchConfiguration('okvis_yaml_file')}]
+        ),
+    ])
+    
+    return LaunchDescription([declare_broadcast_odom_tf_arg,
+                              declare_fail_out_of_range_goal_arg,
+                              declare_mode_arg,
+                              declare_controller_arg,
+                              declare_okvis_config_arg, 
+                              joint_state_publisher,
+                              robot_state_publisher,
+                              tf_publisher,
+                              stretch_driver])
