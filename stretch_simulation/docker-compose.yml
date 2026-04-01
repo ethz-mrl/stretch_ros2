@@ -6,6 +6,8 @@ services:
     container_name: stretch-sim
     build:
       context: .
+      ssh:
+        - default
       dockerfile: Dockerfile
     privileged: true
     network_mode: host

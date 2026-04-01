@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1.4
+
 # Stretch Simulation ROS2 Dockerfile with Nvidia GPU Support
 # Based on Ubuntu 22.04 with ROS2 Humble
 
@@ -23,6 +25,7 @@ RUN apt-get update && apt-get install -y \
     curl \
     wget \
     git \
+    openssh-client \
     gnupg2 \
     lsb-release \
     build-essential \
@@ -111,8 +114,12 @@ RUN pip3 install PyOpenGL==3.1.4
 
 # Set up Mujoco
 # setup.sh already installs dependencies and runs colcon build itself
+RUN mkdir -p -m 0700 /root/.ssh && \
+    ssh-keyscan github.com >> /root/.ssh/known_hosts
+
 WORKDIR /root/ament_ws
-RUN rm -rf build install log && \
+RUN --mount=type=ssh \
+    rm -rf build install log && \
     /bin/bash -c "source /opt/ros/humble/setup.bash && \
     echo 'y' | bash ~/ament_ws/src/stretch_ros2/stretch_simulation/stretch_mujoco_driver/setup.sh"
 
