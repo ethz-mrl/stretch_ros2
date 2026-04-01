@@ -131,6 +131,7 @@ class StretchMujocoDriver(Node):
                 task=robocasa_task or DEFAULT_ROBOCASA_TASK,
                 layout=robocasa_layout,
                 style=robocasa_style,
+                robot_spawn_pose={"pos": "2.0 -2.0 0.0", "quat": "0.0 0.0 0.0 1.0"},
             )
 
         sim = StretchMujocoSimulator(
