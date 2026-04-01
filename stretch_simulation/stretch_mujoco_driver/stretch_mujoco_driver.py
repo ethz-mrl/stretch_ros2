@@ -3,6 +3,7 @@
 import array
 import copy
 from functools import cache
+from pathlib import Path
 import cv2
 import numpy as np
 import threading
@@ -18,6 +19,7 @@ from stretch_mujoco.robocasa_gen import (
     model_generation_wizard,
     get_styles,
     layouts,
+    mujoco,
 )
 
 from rclpy.qos import QoSProfile, ReliabilityPolicy
@@ -134,12 +136,18 @@ class StretchMujocoDriver(Node):
                 robot_spawn_pose={"pos": "2.0 -2.0 0.0", "quat": "0.0 0.0 0.0 1.0"},
             )
 
+            # Save
+            # xml_output_path = Path(__file__).resolve().parent / "generated_scene.xml"
+            # xml_output_path.write_text(xml)
+
+            # Load
+            xml_output_path = Path(__file__).resolve().parent / "coffee_scene.xml"
+            model = mujoco.MjModel.from_xml_string(xml_output_path.read_text())  # type: ignore
+
         sim = StretchMujocoSimulator(
             model=model,
             camera_hz=10,
-            cameras_to_use=(
-                StretchCameras.all() if use_cameras else StretchCameras.none()
-            ),
+            cameras_to_use=(StretchCameras.all() if use_cameras else StretchCameras.none()),
         )
 
         sim.start(headless=not use_mujoco_viewer)
@@ -255,13 +263,13 @@ class StretchMujocoDriver(Node):
             self.sim.move_to(Actuators.head_pan, qpos[Idx.HEAD_PAN])
             self.sim.move_to(Actuators.head_tilt, qpos[Idx.HEAD_TILT])
 
-            is_base_translate_command =  abs(qpos[Idx.BASE_TRANSLATE]) > 0.0
-            is_base_rotate_command =  abs(qpos[Idx.BASE_ROTATE]) > 0.0
-            if self.robot_mode != "position" and ( is_base_translate_command or is_base_rotate_command):
-                self.get_logger().error(
-                    "Cannot set base position when not in position mode."
-                )
-                
+            is_base_translate_command = abs(qpos[Idx.BASE_TRANSLATE]) > 0.0
+            is_base_rotate_command = abs(qpos[Idx.BASE_ROTATE]) > 0.0
+            if self.robot_mode != "position" and (
+                is_base_translate_command or is_base_rotate_command
+            ):
+                self.get_logger().error("Cannot set base position when not in position mode.")
+
             elif abs(qpos[Idx.BASE_TRANSLATE]) > 0.0 and self.robot_mode == "position":
                 self.sim.move_by(Actuators.base_translate, qpos[Idx.BASE_TRANSLATE])
             elif abs(qpos[Idx.BASE_ROTATE]) > 0.0 and self.robot_mode == "position":
@@ -285,7 +293,7 @@ class StretchMujocoDriver(Node):
                     raise Exception(
                         f"{actuator} failed to move to {self.sim.data_proxies.get_command().move_to[actuator.name]}"
                     )
-                
+
             if self.robot_mode == "position":
                 for actuator in [
                     Actuators.base_translate,
@@ -321,9 +329,7 @@ class StretchMujocoDriver(Node):
         if self.robot_mode == "navigation":
             time_since_last_twist = self.get_clock().now() - self.last_twist_time
             if time_since_last_twist < self.timeout:
-                self.sim.set_base_velocity(
-                    self.linear_velocity_mps, self.angular_velocity_radps
-                )
+                self.sim.set_base_velocity(self.linear_velocity_mps, self.angular_velocity_radps)
             elif time_since_last_twist < Duration(seconds=self.timeout_s + 1.0):  # type: ignore
                 # self.sim.set_base_velocity(0.0, 0.0)
                 self.sim.move_by(Actuators.base_translate, 0.0)
@@ -446,9 +452,7 @@ class StretchMujocoDriver(Node):
             pan_backlash_correction = 0.0
 
         head_pan_rad = (
-            head_pan_status.pos
-            + self.head_pan_calibrated_offset_rad
-            + pan_backlash_correction
+            head_pan_status.pos + self.head_pan_calibrated_offset_rad + pan_backlash_correction
         )
         head_pan_vel = head_pan_status.vel
         # head_pan_effort = head_pan_status.effort
@@ -462,9 +466,7 @@ class StretchMujocoDriver(Node):
             tilt_backlash_correction = 0.0
 
         head_tilt_rad = (
-            head_tilt_status.pos
-            + self.head_tilt_calibrated_offset_rad
-            + tilt_backlash_correction
+            head_tilt_status.pos + self.head_tilt_calibrated_offset_rad + tilt_backlash_correction
         )
         head_tilt_vel = head_tilt_status.vel
         # head_tilt_effort = head_tilt_status.effort
@@ -678,8 +680,7 @@ class StretchMujocoDriver(Node):
         self.robot_mode_rwlock.release_read()
         # must happen after the read release, otherwise the write lock in change_mode() will cause a deadlock
         if (self.prev_runstop_state == None and runstop_event.data) or (
-            self.prev_runstop_state != None
-            and runstop_event.data != self.prev_runstop_state
+            self.prev_runstop_state != None and runstop_event.data != self.prev_runstop_state
         ):
             self.runstop_the_robot(runstop_event.data, just_change_mode=True)
 
@@ -697,17 +698,13 @@ class StretchMujocoDriver(Node):
             lidar_data = sensor_status.get_data(StretchSensors.base_lidar)
 
             self.laser_scan_pub.publish(
-                create_laser_scan_msg(
-                    lidar_data, timestamp=current_time, frame_id="laser"
-                )
+                create_laser_scan_msg(lidar_data, timestamp=current_time, frame_id="laser")
             )
         except ValueError:
             ...  # Lidar is disabled, get_data() throws a ValueError
 
         camera_data = self.sim.pull_camera_data()
-        for camera, frame in camera_data.get_all(
-            auto_rotate=False, auto_correct_rgb=True
-        ).items():
+        for camera, frame in camera_data.get_all(auto_rotate=False, auto_correct_rgb=True).items():
             header = Header()
             header.frame_id = get_camera_frame(camera)
             header.stamp = current_time
@@ -730,8 +727,8 @@ class StretchMujocoDriver(Node):
             if camera.is_depth:
                 ros_image_compressed = compress_depth_image(frame)
             else:
-                ros_image_compressed: CompressedImage = (
-                    self.bridge.cv2_to_compressed_imgmsg(frame, "png")
+                ros_image_compressed: CompressedImage = self.bridge.cv2_to_compressed_imgmsg(
+                    frame, "png"
                 )
             ros_image_compressed.header.frame_id = get_camera_frame(camera)
             self.camera_compressed_publishers[camera.name].publish(ros_image_compressed)
@@ -740,9 +737,7 @@ class StretchMujocoDriver(Node):
                 if camera == StretchCameras.cam_d405_depth:
                     pointcloud_msg = create_pointcloud_rgb_msg(
                         camera_info_msg=camera_info,
-                        rgb_image=camera_data.get_camera_data(
-                            StretchCameras.cam_d405_rgb
-                        ),
+                        rgb_image=camera_data.get_camera_data(StretchCameras.cam_d405_rgb),
                         depth_image=frame,
                     )
                 elif camera == StretchCameras.cam_d435i_depth:
@@ -805,9 +800,7 @@ class StretchMujocoDriver(Node):
         # the trajectory, respecting each waypoints' time_from_start
         # attribute of the trajectory_msgs/JointTrajectoryPoint
         # message. This allows coordinated motion of the base + arm.
-        raise NotImplementedError(
-            "Trajectory Mode is not yet supported in StretchMujocoDriver."
-        )
+        raise NotImplementedError("Trajectory Mode is not yet supported in StretchMujocoDriver.")
 
         def code_to_run():
             try:
@@ -827,9 +820,7 @@ class StretchMujocoDriver(Node):
         # Alternatively in this mode, stretch driver also listens to `gamepad_joy` topic
         # for valid Joy type message from a remote gamepad to control stretch.
         # The Joy message format is described in the gamepad_conversion.py
-        raise NotImplementedError(
-            "Gamepad Mode is not yet supported in StretchMujocoDriver."
-        )
+        raise NotImplementedError("Gamepad Mode is not yet supported in StretchMujocoDriver.")
 
         def code_to_run():
             try:
@@ -942,7 +933,9 @@ class StretchMujocoDriver(Node):
                 joint_name = "joint_arm"  # Instead of the telescoping names
                 max_limit *= 4  # 4x the telescoping limit
             if actuator == Actuators.gripper:
-                joint_name = "gripper_aperture"  # A different mapping from stretch_core command_groups
+                joint_name = (
+                    "gripper_aperture"  # A different mapping from stretch_core command_groups
+                )
             if actuator in [
                 Actuators.gripper_left_finger,
                 Actuators.gripper_right_finger,
@@ -1158,9 +1151,7 @@ class StretchMujocoDriver(Node):
             camera.name: self.create_publisher(
                 Image,
                 get_camera_topic_name(camera),
-                qos_profile=QoSProfile(
-                    depth=1, reliability=ReliabilityPolicy.BEST_EFFORT
-                ),
+                qos_profile=QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT),
             )
             for camera in self.sim._cameras_to_use
         }
@@ -1168,9 +1159,7 @@ class StretchMujocoDriver(Node):
             camera.name: self.create_publisher(
                 CompressedImage,
                 f"{get_camera_topic_name(camera)}/compressed",
-                qos_profile=QoSProfile(
-                    depth=1, reliability=ReliabilityPolicy.BEST_EFFORT
-                ),
+                qos_profile=QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT),
             )
             for camera in self.sim._cameras_to_use
         }
@@ -1178,9 +1167,7 @@ class StretchMujocoDriver(Node):
             camera.name: self.create_publisher(
                 PointCloud2,
                 get_camera_pointcloud_topic_name(camera),
-                qos_profile=QoSProfile(
-                    depth=1, reliability=ReliabilityPolicy.BEST_EFFORT
-                ),
+                qos_profile=QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT),
             )
             for camera in self.sim._cameras_to_use
             if camera.is_depth
@@ -1189,24 +1176,18 @@ class StretchMujocoDriver(Node):
             camera.name: self.create_publisher(
                 CameraInfo,
                 get_camera_info_topic_name(camera),
-                qos_profile=QoSProfile(
-                    depth=1, reliability=ReliabilityPolicy.BEST_EFFORT
-                ),
+                qos_profile=QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT),
             )
             for camera in self.sim._cameras_to_use
         }
 
-        self.clock_pub = self.create_publisher(
-            msg_type=Clock, topic="/clock", qos_profile=5
-        )
+        self.clock_pub = self.create_publisher(msg_type=Clock, topic="/clock", qos_profile=5)
 
         self.power_pub = self.create_publisher(BatteryState, "battery", 1)
         self.homed_pub = self.create_publisher(Bool, "is_homed", 1)
         self.mode_pub = self.create_publisher(String, "mode", 1)
         self.tool_pub = self.create_publisher(String, "tool", 1)
-        self.streaming_position_mode_pub = self.create_publisher(
-            Bool, "is_streaming_position", 1
-        )
+        self.streaming_position_mode_pub = self.create_publisher(Bool, "is_streaming_position", 1)
 
         self.imu_mobile_base_pub = self.create_publisher(Imu, "imu_mobile_base", 1)
         self.magnetometer_mobile_base_pub = self.create_publisher(
@@ -1247,9 +1228,7 @@ class StretchMujocoDriver(Node):
         )
 
         self.declare_parameter("rate", DEFAULT_JOINT_STATE_HZ)
-        self.joint_state_rate: float = (
-            self.get_parameter("rate").value or DEFAULT_JOINT_STATE_HZ
-        )
+        self.joint_state_rate: float = self.get_parameter("rate").value or DEFAULT_JOINT_STATE_HZ
 
         self.declare_parameter(
             "timeout",
@@ -1380,17 +1359,11 @@ class StretchMujocoDriver(Node):
 
         # start action server for joint trajectories
         self.declare_parameter("fail_out_of_range_goal", False)
-        self.fail_out_of_range_goal = bool(
-            self.get_parameter("fail_out_of_range_goal").value
-        )
+        self.fail_out_of_range_goal = bool(self.get_parameter("fail_out_of_range_goal").value)
 
-        self.declare_parameter(
-            "fail_if_motor_initial_point_is_not_trajectory_first_point", True
-        )
+        self.declare_parameter("fail_if_motor_initial_point_is_not_trajectory_first_point", True)
         self.fail_if_motor_initial_point_is_not_trajectory_first_point: bool = bool(
-            self.get_parameter(
-                "fail_if_motor_initial_point_is_not_trajectory_first_point"
-            ).value
+            self.get_parameter("fail_if_motor_initial_point_is_not_trajectory_first_point").value
         )
 
         self.declare_parameter("action_server_rate", DEFAULT_ACTION_SERVER_HZ)
@@ -1398,9 +1371,7 @@ class StretchMujocoDriver(Node):
             self.get_parameter("action_server_rate").value or DEFAULT_ACTION_SERVER_HZ
         )
 
-        self.joint_trajectory_action = JointTrajectoryAction(
-            self, self.action_server_rate
-        )
+        self.joint_trajectory_action = JointTrajectoryAction(self, self.action_server_rate)
 
         # Switch to mode:
         self.get_logger().debug("mode = " + str(mode))
@@ -1431,9 +1402,7 @@ class StretchMujocoDriver(Node):
 def create_laser_scan_msg(lidar_data: np.ndarray, timestamp: TimeMsg, frame_id: str):
     ranges = lidar_data.tolist()
 
-    laser_scan_msg = (
-        LaserScan()
-    )  # https://docs.ros.org/en/humble/p/sensor_msgs/msg/LaserScan.html
+    laser_scan_msg = LaserScan()  # https://docs.ros.org/en/humble/p/sensor_msgs/msg/LaserScan.html
     laser_scan_msg.header = Header()
     laser_scan_msg.header.stamp = timestamp
     laser_scan_msg.header.frame_id = frame_id
@@ -1501,9 +1470,7 @@ def create_pointcloud_rgb_msg(
 
     header = Header()
     header.stamp = camera_info_msg.header.stamp
-    header.frame_id = (
-        camera_info_msg.header.frame_id
-    )  # typically "camera_link" or similar
+    header.frame_id = camera_info_msg.header.frame_id  # typically "camera_link" or similar
 
     cloud_msg = pc2.create_cloud(header, fields, cloud_data)
     return cloud_msg
@@ -1529,9 +1496,7 @@ def compress_depth_image(frame: np.ndarray):
     return ros_image_compressed
 
 
-def create_camera_info(
-    camera_settings: CameraSettings, frame_id: str, timestamp: TimeMsg
-):
+def create_camera_info(camera_settings: CameraSettings, frame_id: str, timestamp: TimeMsg):
     camera_info_msg = CameraInfo()
     camera_info_msg.header = Header()
     camera_info_msg.header.stamp = timestamp
