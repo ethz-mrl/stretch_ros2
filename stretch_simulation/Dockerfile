@@ -5,6 +5,9 @@
 
 FROM nvidia/cuda:11.8.0-devel-ubuntu22.04 AS base
 
+ARG STRETCH_ROS2_REPO_URL=git@github.com:ethz-mrl/stretch_ros2.git
+ARG STRETCH_ROS2_REPO_VERSION=feature/simulation
+
 # Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=UTC
@@ -82,6 +85,9 @@ RUN echo "source /opt/ros/humble/setup.bash" >> /root/.bashrc
 # Set up ament_ws workspace
 WORKDIR /root
 
+RUN mkdir -p -m 0700 /root/.ssh && \
+    ssh-keyscan github.com >> /root/.ssh/known_hosts
+
 # Copy the ament workspace setup script
 COPY stretch_create_ament_workspace.sh /tmp/stretch_create_ament_workspace.sh
 RUN chmod +x /tmp/stretch_create_ament_workspace.sh
@@ -89,6 +95,20 @@ RUN chmod +x /tmp/stretch_create_ament_workspace.sh
 # Run the ament workspace setup script with DOCKER_BUILD environment variable
 # This bypasses sudo checks and interactive prompts
 RUN /bin/bash -c "export DOCKER_BUILD=1 && source /opt/ros/humble/setup.bash && /tmp/stretch_create_ament_workspace.sh"
+
+# Optionally replace the imported stretch_ros2 checkout with a private fork and rebuild.
+RUN --mount=type=ssh /bin/bash -c "if [ -n \"${STRETCH_ROS2_REPO_URL}\" ]; then \
+    rm -rf ~/ament_ws/src/stretch_ros2 && \
+    git clone \"${STRETCH_ROS2_REPO_URL}\" ~/ament_ws/src/stretch_ros2 && \
+    if [ -n \"${STRETCH_ROS2_REPO_VERSION}\" ]; then \
+        cd ~/ament_ws/src/stretch_ros2 && git checkout \"${STRETCH_ROS2_REPO_VERSION}\"; \
+    fi && \
+    cd ~/ament_ws && \
+    rm -rf build install log && \
+    source /opt/ros/humble/setup.bash && \
+    rosdep install --rosdistro=humble -iy --skip-keys=\"librealsense2 realsense2_camera\" --from-paths src && \
+    colcon build; \
+fi"
 
 # Source ament_ws setup in bashrc
 RUN echo "source ~/ament_ws/install/setup.bash" >> /root/.bashrc
@@ -114,9 +134,6 @@ RUN pip3 install PyOpenGL==3.1.4
 
 # Set up Mujoco
 # setup.sh already installs dependencies and runs colcon build itself
-RUN mkdir -p -m 0700 /root/.ssh && \
-    ssh-keyscan github.com >> /root/.ssh/known_hosts
-
 WORKDIR /root/ament_ws
 RUN --mount=type=ssh \
     rm -rf build install log && \
