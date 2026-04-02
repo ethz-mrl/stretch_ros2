@@ -137,11 +137,13 @@ class StretchMujocoDriver(Node):
             )
 
             # Save
-            # xml_output_path = Path(__file__).resolve().parent / "generated_scene.xml"
+            # xml_output_path = get_package_share_path("stretch_simulation") / "config" / "generated_scene.xml"
             # xml_output_path.write_text(xml)
 
             # Load
-            xml_output_path = Path(__file__).resolve().parent / "coffee_scene.xml"
+            xml_output_path = (
+                get_package_share_path("stretch_simulation") / "config" / "coffee_scene.xml"
+            )
             model = mujoco.MjModel.from_xml_string(xml_output_path.read_text())  # type: ignore
 
         sim = StretchMujocoSimulator(
@@ -220,6 +222,7 @@ class StretchMujocoDriver(Node):
             return
         self.linear_velocity_mps = twist.linear.x
         self.angular_velocity_radps = twist.angular.z
+        # self.get_logger().warn(f"Current velocities: linear = {self.linear_velocity_mps}, angular = {self.angular_velocity_radps}")
         self.last_twist_time = self.get_clock().now()
         self.robot_mode_rwlock.release_read()
 
@@ -329,7 +332,10 @@ class StretchMujocoDriver(Node):
         if self.robot_mode == "navigation":
             time_since_last_twist = self.get_clock().now() - self.last_twist_time
             if time_since_last_twist < self.timeout:
-                self.sim.set_base_velocity(self.linear_velocity_mps, self.angular_velocity_radps)
+                gain = 1.5
+                self.sim.set_base_velocity(
+                    self.linear_velocity_mps * gain, self.angular_velocity_radps * gain
+                )
             elif time_since_last_twist < Duration(seconds=self.timeout_s + 1.0):  # type: ignore
                 # self.sim.set_base_velocity(0.0, 0.0)
                 self.sim.move_by(Actuators.base_translate, 0.0)
