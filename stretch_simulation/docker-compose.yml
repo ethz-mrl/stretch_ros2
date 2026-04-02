@@ -17,6 +17,8 @@ services:
     environment: 
       - DISPLAY=${DISPLAY}
       - QT_X11_NO_MITSHM=1
+      - AMENT_TRACE_SETUP_FILES=
+      - STRETCH_MUJOCO_EDITABLE_INSTALL=${STRETCH_MUJOCO_EDITABLE_INSTALL:-0}
     volumes:
       # X11 socket for GUI
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
@@ -24,6 +26,8 @@ services:
       # Mount local source code for development
       - ./:/root/ament_ws/src/stretch_ros2/stretch_simulation:rw
       - ../stretch_nav2/:/root/ament_ws/src/stretch_ros2/stretch_nav2:rw
+      # Set STRETCH_MUJOCO_HOST_DIR in your shell or .env to your local stretch_mujoco path
+      - ${STRETCH_MUJOCO_HOST_DIR}:/root/repos/stretch_mujoco:rw
     deploy:
       resources:
         reservations:
@@ -34,5 +38,4 @@ services:
     command:
       - bash
       - -c
-      - |  
-        terminator -u --title="Task Container"
+      - terminator -u --title="Task Container"

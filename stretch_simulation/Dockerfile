@@ -150,9 +150,6 @@ RUN cp ./stretch_uncalibrated.urdf stretch.urdf && \
 # Create maps directory
 RUN mkdir -p ${HELLO_FLEET_PATH}/maps
 
-# Set working directory back to ament_ws
-WORKDIR /root/ament_ws
-
 # Set up display for GUI applications
 ENV DISPLAY=:0
 ENV QT_X11_NO_MITSHM=1
@@ -161,12 +158,8 @@ ENV QT_X11_NO_MITSHM=1
 EXPOSE 8080 3000
 
 # Create entrypoint script
-RUN echo '#!/bin/bash\n\
-set -e\n\
-source /opt/ros/humble/setup.bash\n\
-source ~/ament_ws/install/setup.bash\n\
-exec "$@"' > /entrypoint.sh && \
-    chmod +x /entrypoint.sh
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["/bin/bash"]
