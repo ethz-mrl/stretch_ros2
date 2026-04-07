@@ -878,6 +878,14 @@ class StretchMujocoDriver(Node):
         response.success = success
         response.message = message
         return response
+    
+    def get_object_poses_callback(self, request, response):
+        link_pose_from_sim = self.sim.pull_status()
+        self.object_poses = link_pose_from_sim.object_poses
+        
+        response.success = True
+        response.message = f"{self.object_poses}"
+        return response
 
     def get_joint_states_callback(self, request, response):
         joint_limits = JointState()
@@ -1234,6 +1242,13 @@ class StretchMujocoDriver(Node):
             SetBool,
             "/runstop",
             self.runstop_service_callback,
+            callback_group=self.main_group,
+        )
+
+        self.get_object_poses = self.create_service(
+            Trigger,
+            "/get_object_poses",
+            self.get_object_poses_callback,
             callback_group=self.main_group,
         )
 
