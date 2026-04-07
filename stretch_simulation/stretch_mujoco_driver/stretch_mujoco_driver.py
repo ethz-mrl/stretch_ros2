@@ -62,11 +62,7 @@ from std_msgs.msg import Bool, String, Float64MultiArray
 from hello_helpers.joint_qpos_conversion import SE3_dw3_sg3_Idx
 from hello_helpers.joint_qpos_conversion import get_Idx
 from hello_helpers.gripper_conversion import GripperConversion
-from hello_helpers.gamepad_conversion import (
-    unpack_joy_to_gamepad_state,
-    unpack_gamepad_state_to_joy,
-    get_default_joy_msg,
-)
+from hello_helpers.gamepad_conversion import get_default_joy_msg
 
 # from .joint_trajectory_server import JointTrajectoryAction
 from builtin_interfaces.msg import Time as TimeMsg
@@ -316,18 +312,6 @@ class StretchMujocoDriver(Node):
 
         self.robot_mode_rwlock.acquire_read()
 
-        # During gamepad mode, the robot can be controlled with provided gamepad dongle plugged into the robot
-        # Or a Joy message type could also be published which can be used for controlling robot with an remote gamepad.
-        # The Joy message should follow the format described in gamepad_conversion.py
-        # if self.robot_mode == 'gamepad':
-        #     time_since_last_joy = self.get_clock().now() - self.last_gamepad_joy_time
-        #     if time_since_last_joy < self.timeout:
-        #         self.gamepad_teleop.do_motion(unpack_joy_to_gamepad_state(self.received_gamepad_joy_msg),robot=self.robot)
-        #     else:
-        #         self.gamepad_teleop.do_motion(robot=self.robot)
-        # else:
-        #     self.gamepad_teleop.update_gamepad_state(self.robot) # Update gamepad input readings within gamepad_teleop instance
-
         # Set new mobile base velocities
         if self.robot_mode == "navigation":
             time_since_last_twist = self.get_clock().now() - self.last_twist_time
@@ -435,20 +419,6 @@ class StretchMujocoDriver(Node):
         wrist_roll_vel = wrist_roll_status.vel
         # wrist_roll_effort = wrist_roll_status.effort
         wrist_roll_effort = 0.0
-
-        # assign relevant gripper status to variables
-        # if 'stretch_gripper' in self.sim.end_of_arm.joints:
-        #     gripper_status = robot_status['end_of_arm']['stretch_gripper']
-        #     if GRIPPER_DEBUG:
-        #         print('-----------------------')
-        #         print('gripper_status[\'pos\'] =', gripper_status['pos'])
-        #         print('gripper_status[\'pos_pct\'] =', gripper_status['pos_pct'])
-        #     gripper_aperture_m, gripper_finger_rad, gripper_finger_effort, gripper_finger_vel = \
-        #         self.gripper_conversion.status_to_all(gripper_status)
-        #     if GRIPPER_DEBUG:
-        #         print('gripper_aperture_m =', gripper_aperture_m)
-        #         print('gripper_finger_rad =', gripper_finger_rad)
-        #         print('-----------------------')
 
         # assign relevant head pan status to variables
         head_pan_status = robot_status.head_pan
@@ -615,11 +585,6 @@ class StretchMujocoDriver(Node):
         az = accel_status[2]
         gx = gyro_status[0]
         gy = gyro_status[1]
-        # gz = gyro_status[2]
-        # qw = gyro_status[3]
-        # qx =  gyro_status[4]
-        # qy = gyro_status[5]
-        # qz = gyro_status[6]
         gz = qw = qx = qy = qz = 0.0  # TODO
 
         i = Imu()
@@ -644,10 +609,6 @@ class StretchMujocoDriver(Node):
         m.header.frame_id = "imu_mobile_base"
         self.magnetometer_mobile_base_pub.publish(m)
 
-        # accel_status = robot_status.wacc
-        # ax = accel_status.ax
-        # ay = accel_status.ay
-        # az = accel_status.az
         ax = ay = az = 0.0
 
         i = Imu()
@@ -673,15 +634,6 @@ class StretchMujocoDriver(Node):
         odom.twist.twist.linear.y = y_vel
         odom.twist.twist.angular.z = theta_vel
         self.odom_pub.publish(odom)
-
-        ##################################################
-        # Publish Stretch Gamepad status
-        # b = Bool()
-        # b.data = True if self.gamepad_teleop.is_gamepad_dongle else False
-        # self.is_gamepad_dongle_pub.publish(b)
-        # j = unpack_gamepad_state_to_joy(self.gamepad_teleop.controller_state)
-        # j.header.stamp = current_time
-        # self.gamepad_state_pub.publish(j)
 
         self.robot_mode_rwlock.release_read()
         # must happen after the read release, otherwise the write lock in change_mode() will cause a deadlock
@@ -1053,20 +1005,6 @@ class StretchMujocoDriver(Node):
 
         self.get_logger().info("{0} started".format(self.node_name))
 
-        # Handle the non_dxl status in local loop, not thread
-        # if not self.sim.startup(start_non_dxl_thread=False,
-        #                           start_dxl_thread=True,
-        #                           start_sys_mon_thread=True):
-        #     self.get_logger().fatal('Robot startup failed.')
-        #     rclpy.shutdown()
-        #     exit()
-        # if not self.sim.is_homed():
-        #     self.get_logger().warn("Robot not homed. Call /home_the_robot service.")
-
-        # Create Gamepad Teleop instance
-        # self.gamepad_teleop = gamepad_teleop.GamePadTeleop(robot_instance=False,print_dongle_status=False, lock=self.robot_stop_lock)
-        # self.gamepad_teleop.startup(self.robot)
-
         self.declare_parameter("mode", "position")
         mode = self.get_parameter("mode").value
         if mode not in self.control_modes:
@@ -1090,56 +1028,6 @@ class StretchMujocoDriver(Node):
             "controller_calibration_file",
             str(stretch_core_path / "config" / "controller_calibration_head.yaml"),
         )
-        # large_ang = np.radians(45.0)
-        # filename = self.get_parameter('controller_calibration_file').value
-        # self.get_logger().debug('Loading controller calibration parameters for the head from YAML file named {0}'.format(filename))
-        # with open(filename, 'r') as fid:
-        #     self.controller_parameters = yaml.safe_load(fid)
-
-        #     self.get_logger().debug('controller parameters loaded = {0}'.format(self.controller_parameters))
-
-        #     self.head_tilt_calibrated_offset_rad = self.controller_parameters['tilt_angle_offset']
-        #     ang = self.head_tilt_calibrated_offset_rad
-        #     if (abs(ang) > large_ang):
-        #         self.get_logger().warn('self.head_tilt_calibrated_offset_rad HAS AN UNUSUALLY LARGE MAGNITUDE')
-        #     self.get_logger().debug('self.head_tilt_calibrated_offset_rad in degrees ='
-        #                            ' {0}'.format(np.degrees(self.head_tilt_calibrated_offset_rad)))
-
-        #     self.head_pan_calibrated_offset_rad = self.controller_parameters['pan_angle_offset']
-        #     ang = self.head_pan_calibrated_offset_rad
-        #     if (abs(ang) > large_ang):
-        #         self.get_logger().warn('self.head_pan_calibrated_offset_rad HAS AN UNUSUALLY LARGE MAGNITUDE')
-        #     self.get_logger().debug('self.head_pan_calibrated_offset_rad in degrees ='
-        #                            ' {0}'.format(np.degrees(self.head_pan_calibrated_offset_rad)))
-
-        #     self.head_pan_calibrated_looked_left_offset_rad = self.controller_parameters['pan_looked_left_offset']
-        #     ang = self.head_pan_calibrated_looked_left_offset_rad
-        #     if (abs(ang) > large_ang):
-        #         self.get_logger().warn('self.head_pan_calibrated_looked_left_offset_rad HAS AN UNUSUALLY LARGE MAGNITUDE')
-        #     self.get_logger().debug(
-        #         'self.head_pan_calibrated_looked_left_offset_rad in degrees = {0}'.format(
-        #             np.degrees(self.head_pan_calibrated_looked_left_offset_rad)))
-
-        #     self.head_tilt_backlash_transition_angle_rad = self.controller_parameters['tilt_angle_backlash_transition']
-        #     self.get_logger().debug(
-        #         'self.head_tilt_backlash_transition_angle_rad in degrees = {0}'.format(
-        #             np.degrees(self.head_tilt_backlash_transition_angle_rad)))
-
-        #     self.head_tilt_calibrated_looking_up_offset_rad = self.controller_parameters['tilt_looking_up_offset']
-        #     ang = self.head_tilt_calibrated_looking_up_offset_rad
-        #     if (abs(ang) > large_ang):
-        #         self.get_logger().warn('self.head_tilt_calibrated_looking_up_offset_rad HAS AN UNUSUALLY LARGE MAGNITUDE')
-        #     self.get_logger().debug(
-        #         'self.head_tilt_calibrated_looking_up_offset_rad in degrees = {0}'.format(
-        #             np.degrees(self.head_tilt_calibrated_looking_up_offset_rad)))
-
-        #     self.wrist_extension_calibrated_retracted_offset_m = self.controller_parameters['arm_retracted_offset']
-        #     m = self.wrist_extension_calibrated_retracted_offset_m
-        #     if (abs(m) > 0.05):
-        #         self.get_logger().warn('self.wrist_extension_calibrated_retracted_offset_m HAS AN UNUSUALLY LARGE MAGNITUDE')
-        #     self.get_logger().debug(
-        #         'self.wrist_extension_calibrated_retracted_offset_m in meters = {0}'.format(
-        #             self.wrist_extension_calibrated_retracted_offset_m))
 
         self.linear_velocity_mps = 0.0  # m/s ROS SI standard for cmd_vel (REP 103)
         self.angular_velocity_radps = 0.0  # rad/s ROS SI standard for cmd_vel (REP 103)
@@ -1399,10 +1287,6 @@ class StretchMujocoDriver(Node):
             callback_group=self.mutex_group,
         )
 
-        # self.create_timer(
-        #     1/15,
-        #     self.publish_camera_and_lidar,
-        # )
 
 
 def create_laser_scan_msg(lidar_data: np.ndarray, timestamp: TimeMsg, frame_id: str):
