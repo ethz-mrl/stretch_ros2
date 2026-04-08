@@ -91,9 +91,14 @@ class StretchMujocoDriver(Node):
         self.declare_parameter("robocasa_task", DEFAULT_ROBOCASA_TASK)
         self.declare_parameter("robocasa_layout", None)
         self.declare_parameter("robocasa_style", None)
+        self.declare_parameter("robot_spawn_pose_pos", "2.0 -2.0 0.0")
+        self.declare_parameter("robot_spawn_pose_quat", "0.0 0.0 0.0 1.0")
 
         use_cameras = self.get_parameter("use_cameras").value
         use_mujoco_viewer = self.get_parameter("use_mujoco_viewer").value
+        robot_spawn_pose_pos = self.get_parameter("robot_spawn_pose_pos").value
+        robot_spawn_pose_quat = self.get_parameter("robot_spawn_pose_quat").value
+        robot_spawn_pose = {"pos": robot_spawn_pose_pos, "quat": robot_spawn_pose_quat}
 
         model = None
 
@@ -129,7 +134,7 @@ class StretchMujocoDriver(Node):
                 task=robocasa_task or DEFAULT_ROBOCASA_TASK,
                 layout=robocasa_layout,
                 style=robocasa_style,
-                robot_spawn_pose={"pos": "2.0 -2.0 0.0", "quat": "0.0 0.0 0.0 1.0"},
+                robot_spawn_pose=robot_spawn_pose,
             )
 
             # Save
@@ -878,11 +883,11 @@ class StretchMujocoDriver(Node):
         response.success = success
         response.message = message
         return response
-    
+
     def get_object_poses_callback(self, request, response):
         link_pose_from_sim = self.sim.pull_status()
         self.object_poses = link_pose_from_sim.object_poses
-        
+
         response.success = True
         response.message = f"{self.object_poses}"
         return response
@@ -1301,7 +1306,6 @@ class StretchMujocoDriver(Node):
             self.command_mobile_base_velocity_and_publish_state,
             callback_group=self.mutex_group,
         )
-
 
 
 def create_laser_scan_msg(lidar_data: np.ndarray, timestamp: TimeMsg, frame_id: str):

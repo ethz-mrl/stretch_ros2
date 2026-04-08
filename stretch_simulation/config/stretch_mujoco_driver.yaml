@@ -1,0 +1,13 @@
+stretch_mujoco_driver:
+  ros__parameters:
+    use_mujoco_viewer: true
+    mode: navigation
+    use_robocasa: true
+    robocasa_layout: G-shaped
+    robocasa_style: Modern_2
+    use_cameras: false
+    robocasa_task: PnPCounterToCab
+    broadcast_odom_tf: true
+    fail_out_of_range_goal: false
+    robot_spawn_pose_pos: "2.0 -2.0 0.0"
+    robot_spawn_pose_quat: "0.0 0.0 0.0 1.0"
