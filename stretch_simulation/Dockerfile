@@ -60,6 +60,8 @@ RUN apt-get update && apt-get install -y \
     gnome-terminal \
     terminator \
     gedit \
+    xdotool \
+    wmctrl \
     && rm -rf /var/lib/apt/lists/*
 
 # Upgrade pip
