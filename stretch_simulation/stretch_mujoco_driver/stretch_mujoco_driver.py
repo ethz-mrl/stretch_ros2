@@ -180,7 +180,7 @@ class StretchMujocoDriver(Node):
 
         self.robot_mode_rwlock = RWLock()
         self.robot_mode = None
-        self.control_modes = ["position", "navigation", "trajectory", "gamepad"]
+        self.control_modes = ["position", "navigation"]
         self.prev_runstop_state = None  # helps track if runstop state has changed
 
         self.voltage_history = []
@@ -763,18 +763,7 @@ class StretchMujocoDriver(Node):
         # the trajectory, respecting each waypoints' time_from_start
         # attribute of the trajectory_msgs/JointTrajectoryPoint
         # message. This allows coordinated motion of the base + arm.
-        raise NotImplementedError("Trajectory Mode is not yet supported in StretchMujocoDriver.")
-
-        def code_to_run():
-            try:
-                self.sim.stop_trajectory()
-            except NotImplementedError as e:
-                return False, str(e)
-            self.sim.base.first_step = True
-            self.sim.base.pull_status()
-
-        self.change_mode("trajectory", code_to_run)
-        return True, "Now in trajectory mode."
+        return False, "Trajectory mode is not supported in StretchMujocoDriver."
 
     def turn_on_gamepad_mode(self):
         # Gamepad mode enables the provided gamepad with stretch
@@ -783,18 +772,7 @@ class StretchMujocoDriver(Node):
         # Alternatively in this mode, stretch driver also listens to `gamepad_joy` topic
         # for valid Joy type message from a remote gamepad to control stretch.
         # The Joy message format is described in the gamepad_conversion.py
-        raise NotImplementedError("Gamepad Mode is not yet supported in StretchMujocoDriver.")
-
-        def code_to_run():
-            try:
-                self.sim.stop_trajectory()
-            except NotImplementedError as e:
-                return False, str(e)
-            self.gamepad_teleop.do_double_beep(self.robot)
-            self.sim.base.pull_status()
-
-        self.change_mode("gamepad", code_to_run)
-        return True, "Now in gamepad mode."
+        return False, "Gamepad mode is not supported in StretchMujocoDriver."
 
     def activate_streaming_position(self, request):
         self.streaming_position_activated = True
@@ -1194,20 +1172,6 @@ class StretchMujocoDriver(Node):
             callback_group=self.main_group,
         )
 
-        self.switch_to_trajectory_mode_service = self.create_service(
-            Trigger,
-            "/switch_to_trajectory_mode",
-            self.trajectory_mode_service_callback,
-            callback_group=self.main_group,
-        )
-
-        self.switch_to_gamepad_mode_service = self.create_service(
-            Trigger,
-            "/switch_to_gamepad_mode",
-            self.gamepad_mode_service_callback,
-            callback_group=self.main_group,
-        )
-
         self.activate_streaming_position_service = self.create_service(
             Trigger,
             "/activate_streaming_position",
@@ -1293,10 +1257,11 @@ class StretchMujocoDriver(Node):
             self.turn_on_position_mode()
         elif mode == "navigation":
             self.turn_on_navigation_mode()
-        elif mode == "trajectory":
-            self.turn_on_trajectory_mode()
-        elif mode == "gamepad":
-            self.turn_on_gamepad_mode()
+        else:
+            self.get_logger().warn(
+                f"Mode '{mode}' is not supported in StretchMujocoDriver, using position mode instead"
+            )
+            self.turn_on_position_mode()
 
         # start loop to command the mobile base velocity, publish
         # odometry, and publish joint states
