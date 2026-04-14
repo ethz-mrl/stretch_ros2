@@ -59,6 +59,7 @@ def generate_launch_description():
                 {"source_list": ["/stretch/joint_states"]},
                 {"rate": 30.0},
                 {"robot_description": robot_description_content},
+                {"use_sim_time": True},
             ],
             arguments=["--ros-args", "--log-level", "error"],
         )
