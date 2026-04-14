@@ -73,6 +73,7 @@ def generate_launch_description():
             parameters=[
                 {"robot_description": robot_description_content},
                 {"publish_frequency": 30.0},
+                {"use_sim_time": True},
             ],
             arguments=["--ros-args", "--log-level", "error"],
         )
