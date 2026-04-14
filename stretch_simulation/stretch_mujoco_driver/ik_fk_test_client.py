@@ -9,9 +9,11 @@ import rclpy
 from rclpy.action import ActionClient
 from rclpy.duration import Duration
 from rclpy.node import Node
+from rclpy.time import Time
 
 from control_msgs.action import FollowJointTrajectory
 from std_srvs.srv import Trigger
+from tf2_ros import Buffer, TransformException, TransformListener
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 
@@ -19,6 +21,7 @@ ACTION_NAME = "/stretch_controller/follow_joint_trajectory"
 HOME_SERVICE = "/home_the_robot"
 ARM_EXTENSION_M = 0.35
 GRIPPER_APERTURE_M = 0.08
+TF_TIMEOUT_S = 10.0
 
 
 class IKFKTestClient(Node):
@@ -27,6 +30,8 @@ class IKFKTestClient(Node):
         self._action_client = ActionClient(self, FollowJointTrajectory, ACTION_NAME)
         self._home_client = self.create_client(Trigger, HOME_SERVICE)
         self._point_duration = max(point_duration_s, 0.1)
+        self._tf_buffer = Buffer()
+        self._tf_listener = TransformListener(self._tf_buffer, self)
 
     def run(self) -> int:
         self.get_logger().info(f"Waiting for action server on {ACTION_NAME}...")
@@ -84,7 +89,9 @@ class IKFKTestClient(Node):
         ]
 
         ok_fk = self._send_single_point_goal("FK", fk_names, fk_positions)
+        self._log_requested_transforms("after FK goal")
         ok_ik = self._send_single_point_goal("IK", ik_names, ik_positions)
+        self._log_requested_transforms("after IK goal")
 
         if ok_fk and ok_ik:
             self.get_logger().info("Both FK and IK tests passed.")
@@ -112,6 +119,58 @@ class IKFKTestClient(Node):
             self.get_logger().info("Robot returned to home position.")
         else:
             self.get_logger().warn(f"Home request failed: {response.message}")
+
+    def _log_requested_transforms(self, label: str) -> None:
+        self.get_logger().info(f"Looking up TFs {label}...")
+        self._log_transform("map", "base_link")
+        self._log_transform("base_link", "camera_link")
+        self._log_transform("base_link", "link_grasp_center")
+
+    def _log_transform(self, target_frame: str, source_frame: str) -> None:
+        try:
+            wait_future = self._tf_buffer.wait_for_transform_async(
+                target_frame,
+                source_frame,
+                Time(),
+            )
+            rclpy.spin_until_future_complete(self, wait_future, timeout_sec=TF_TIMEOUT_S)
+            if not wait_future.done() or wait_future.result() is None:
+                self.get_logger().error(
+                    f"Timed out waiting for TF target='{target_frame}', source='{source_frame}'."
+                )
+                return
+
+            transform = self._tf_buffer.lookup_transform(
+                target_frame,
+                source_frame,
+                Time(),
+            )
+        except TransformException as exc:
+            self.get_logger().error(
+                f"TF lookup failed for target='{target_frame}', source='{source_frame}': {exc}"
+            )
+            return
+
+        translation = transform.transform.translation
+        rotation = transform.transform.rotation
+        stamp = transform.header.stamp
+        self.get_logger().info(
+            "TF target='%s' source='%s' at %d.%09d: "
+            "translation=(%.4f, %.4f, %.4f), rotation=(%.4f, %.4f, %.4f, %.4f)"
+            % (
+                target_frame,
+                source_frame,
+                stamp.sec,
+                stamp.nanosec,
+                translation.x,
+                translation.y,
+                translation.z,
+                rotation.x,
+                rotation.y,
+                rotation.z,
+                rotation.w,
+            )
+        )
 
     def _send_single_point_goal(
         self,
