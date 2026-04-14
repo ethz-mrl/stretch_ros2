@@ -344,6 +344,7 @@ class StretchMujocoDriver(Node):
 
         # Use node time for other topics, using sim time makes bad things happen.
         current_time = self.get_clock().now().to_msg()
+        # current_time = sim_time
 
         # obtain odometry
         # assign relevant base status to variables
