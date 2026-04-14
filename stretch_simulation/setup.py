@@ -24,6 +24,7 @@ setup(
     entry_points={
         'console_scripts': [
             'stretch_mujoco_driver = stretch_mujoco_driver.stretch_mujoco_driver:main',
+            'stretch_ik_fk_test = stretch_mujoco_driver.ik_fk_test_client:main',
         ],
     },
 )
