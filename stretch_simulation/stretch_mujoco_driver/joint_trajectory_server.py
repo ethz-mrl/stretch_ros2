@@ -103,6 +103,18 @@ class JointTrajectoryAction:
         self.node.get_logger().info("Executing trajectory...")
 
         trajectory = goal_handle.request.trajectory
+        # Normalize trajectory joint naming to match the real Stretch driver.
+        try:
+            trajectory = hm.merge_arm_joints(trajectory)
+            trajectory = hm.preprocess_gripper_trajectory(trajectory)
+        except hm.FollowJointTrajectoryException as e:
+            self.node.get_logger().error(str(e))
+            goal_handle.abort()
+            result = FollowJointTrajectory.Result()
+            result.error_code = e.CODE
+            result.error_string = str(e)
+            return result
+
         joint_names = trajectory.joint_names
         last_positions = {name: 0.0 for name in joint_names}
 
@@ -136,9 +148,6 @@ class JointTrajectoryAction:
 
             for actuator in actuators_in_use:
                 self.node.sim.wait_until_at_setpoint(actuator)
-
-            for actuator in [Actuators.left_wheel_vel, Actuators.right_wheel_vel]:
-                self.node.sim.wait_while_is_moving(actuator)
 
             # Simulate wait until point.time_from_start
             # self._wait_until(
@@ -177,13 +186,15 @@ def get_actuator_by_joint_names_in_command_groups(joint_name: str) -> Actuators:
         return Actuators.lift
     if joint_name == "joint_arm" or joint_name == "wrist_extension":
         return Actuators.arm
+    if joint_name in ["joint_arm_l0", "joint_arm_l1", "joint_arm_l2", "joint_arm_l3"]:
+        return Actuators.arm
     if joint_name == "joint_wrist_yaw":
         return Actuators.wrist_yaw
     if joint_name == "joint_wrist_pitch":
         return Actuators.wrist_pitch
     if joint_name == "joint_wrist_roll":
         return Actuators.wrist_roll
-    if joint_name == "joint_gripper_slide" or joint_name == "joint_gripper_finger_left" or joint_name == "joint_gripper_finger_right" or joint_name == "gripper_aperture":
+    if joint_name == "joint_gripper_slide" or joint_name == "joint_gripper_finger_left" or joint_name == "joint_gripper_finger_right" or joint_name == "gripper_aperture" or joint_name == "stretch_gripper":
         return Actuators.gripper
     if joint_name == "joint_head_pan":
         return Actuators.head_pan
