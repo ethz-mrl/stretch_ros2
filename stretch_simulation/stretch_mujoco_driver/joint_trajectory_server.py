@@ -88,9 +88,7 @@ class JointTrajectoryAction:
             and self._goal_handle.is_active
             and (time_duration < self.timeout)
         ):
-            return (
-                GoalResponse.REJECT
-            )  # Reject goal if another goal is currently active
+            return GoalResponse.REJECT  # Reject goal if another goal is currently active
 
         self.last_goal_time = self.node.get_clock().now().to_msg()
         return GoalResponse.ACCEPT
@@ -116,7 +114,6 @@ class JointTrajectoryAction:
             return result
 
         joint_names = trajectory.joint_names
-        last_positions = {name: 0.0 for name in joint_names}
 
         for point in trajectory.points:
             positions: list[float] = point.positions
@@ -134,20 +131,42 @@ class JointTrajectoryAction:
                     continue
 
                 target_position = positions[i]
-                delta = target_position - last_positions[joint]
-                last_positions[joint] = target_position
                 velocity = velocities[i]
 
-                if (actuator == Actuators.left_wheel_vel or actuator == Actuators.right_wheel_vel) and velocity is not None:
+                actuator_name = actuator.name
+
+                if (
+                    actuator_name == Actuators.left_wheel_vel.name
+                    or actuator_name == Actuators.right_wheel_vel.name
+                ) and velocity is not None:
                     self.node.sim.set_base_velocity(velocity, 0)
                     continue
 
-                self.node.sim.move_to(actuator, target_position)
+                is_incremental_base_joint = joint in (
+                    "translate_mobile_base",
+                    "rotate_mobile_base",
+                    "position",
+                ) or actuator_name in (
+                    Actuators.base_translate.name,
+                    Actuators.base_rotate.name,
+                )
 
-                actuators_in_use.append(actuator)
+                if is_incremental_base_joint:
+                    # These command-group joints are incremental in Stretch core,
+                    # so they must be executed as relative base motions in sim.
+                    self.node.sim.move_by(actuator_name, target_position)
+                    actuators_in_use.append(actuator_name)
+                    continue
+
+                self.node.sim.move_to(actuator_name, target_position)
+
+                actuators_in_use.append(actuator_name)
 
             for actuator in actuators_in_use:
-                self.node.sim.wait_until_at_setpoint(actuator)
+                if actuator in (Actuators.base_translate.name, Actuators.base_rotate.name):
+                    self.node.sim.wait_while_is_moving(actuator)
+                else:
+                    self.node.sim.wait_until_at_setpoint(actuator)
 
             # Simulate wait until point.time_from_start
             # self._wait_until(
@@ -162,9 +181,7 @@ class JointTrajectoryAction:
     def _wait_until(self, seconds):
         loop_rate = self.node.create_rate(10)
         t_start = self.node.get_clock().now().seconds_nanoseconds()[0]
-        while (
-            self.node.get_clock().now().seconds_nanoseconds()[0] - t_start
-        ) < seconds:
+        while (self.node.get_clock().now().seconds_nanoseconds()[0] - t_start) < seconds:
             loop_rate.sleep()
 
 
@@ -177,11 +194,11 @@ def get_actuator_by_joint_names_in_command_groups(joint_name: str) -> Actuators:
         return Actuators.left_wheel_vel
     if joint_name == "joint_right_wheel":
         return Actuators.right_wheel_vel
-    if joint_name == 'translate_mobile_base' or joint_name == 'position':
+    if joint_name == "translate_mobile_base" or joint_name == "position":
         return Actuators.base_translate
-    if joint_name == 'rotate_mobile_base':
+    if joint_name == "rotate_mobile_base":
         return Actuators.base_rotate
-    
+
     if joint_name == "joint_lift":
         return Actuators.lift
     if joint_name == "joint_arm" or joint_name == "wrist_extension":
@@ -194,7 +211,13 @@ def get_actuator_by_joint_names_in_command_groups(joint_name: str) -> Actuators:
         return Actuators.wrist_pitch
     if joint_name == "joint_wrist_roll":
         return Actuators.wrist_roll
-    if joint_name == "joint_gripper_slide" or joint_name == "joint_gripper_finger_left" or joint_name == "joint_gripper_finger_right" or joint_name == "gripper_aperture" or joint_name == "stretch_gripper":
+    if (
+        joint_name == "joint_gripper_slide"
+        or joint_name == "joint_gripper_finger_left"
+        or joint_name == "joint_gripper_finger_right"
+        or joint_name == "gripper_aperture"
+        or joint_name == "stretch_gripper"
+    ):
         return Actuators.gripper
     if joint_name == "joint_head_pan":
         return Actuators.head_pan
