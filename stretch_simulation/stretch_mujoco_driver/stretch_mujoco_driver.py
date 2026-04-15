@@ -389,6 +389,24 @@ class StretchMujocoDriver(Node):
             b.child_frame_id = self.odom_frame_id
             self.tf_static_broadcaster.sendTransform(b)
 
+        # Publish TFs for tracked objects (map -> object_name)
+        for object_name, pose in robot_status.object_poses.items():
+            obj_t = TransformStamped()
+            obj_t.header.stamp = current_time
+            obj_t.header.frame_id = "map"
+            obj_t.child_frame_id = object_name
+            pos = pose["position"]
+            rpy = pose["rotation"]
+            obj_t.transform.translation.x = float(pos[0])
+            obj_t.transform.translation.y = float(pos[1])
+            obj_t.transform.translation.z = float(pos[2])
+            q_obj = quaternion_from_euler(float(rpy[0]), float(rpy[1]), float(rpy[2]))
+            obj_t.transform.rotation.x = q_obj[0]
+            obj_t.transform.rotation.y = q_obj[1]
+            obj_t.transform.rotation.z = q_obj[2]
+            obj_t.transform.rotation.w = q_obj[3]
+            self.object_tf_broadcaster.sendTransform(obj_t)
+
         # assign relevant arm status to variables
         arm_status = robot_status.arm
         if self.backlash_state["wrist_extension_retracted"]:
@@ -1011,6 +1029,8 @@ class StretchMujocoDriver(Node):
         if self.broadcast_odom_tf:
             self.tf_broadcaster = tf2_ros.TransformBroadcaster(self)
             self.tf_static_broadcaster = StaticTransformBroadcaster(self)
+
+        self.object_tf_broadcaster = tf2_ros.TransformBroadcaster(self)
 
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
