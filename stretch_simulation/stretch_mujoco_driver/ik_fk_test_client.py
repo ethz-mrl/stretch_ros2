@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import time
 from typing import Sequence
 
 import rclpy
@@ -22,14 +23,17 @@ HOME_SERVICE = "/home_the_robot"
 ARM_EXTENSION_M = 0.35
 GRIPPER_APERTURE_M = 0.08
 TF_TIMEOUT_S = 10.0
+BASE_TRANSLATE_M = 1.00
+BASE_ROTATE_RAD = 1.57
 
 
 class IKFKTestClient(Node):
-    def __init__(self, point_duration_s: float):
+    def __init__(self, point_duration_s: float, settle_time_s: float):
         super().__init__("ik_fk_test_client")
         self._action_client = ActionClient(self, FollowJointTrajectory, ACTION_NAME)
         self._home_client = self.create_client(Trigger, HOME_SERVICE)
         self._point_duration = max(point_duration_s, 0.1)
+        self._settle_time_s = max(settle_time_s, 0.0)
         self._tf_buffer = Buffer()
         self._tf_listener = TransformListener(self._tf_buffer, self)
 
@@ -89,12 +93,75 @@ class IKFKTestClient(Node):
         ]
 
         ok_fk = self._send_single_point_goal("FK", fk_names, fk_positions)
+        self._settle_between_goals("FK")
         self._log_requested_transforms("after FK goal")
         ok_ik = self._send_single_point_goal("IK", ik_names, ik_positions)
+        self._settle_between_goals("IK")
         self._log_requested_transforms("after IK goal")
 
-        if ok_fk and ok_ik:
-            self.get_logger().info("Both FK and IK tests passed.")
+        full_body_names = [
+            "translate_mobile_base",
+            "joint_lift",
+            "joint_arm",
+            "joint_wrist_yaw",
+            "joint_wrist_pitch",
+            "joint_wrist_roll",
+            "joint_head_pan",
+            "joint_head_tilt",
+            "gripper_aperture",
+        ]
+        full_body_rotate_names = [
+            "rotate_mobile_base",
+            "joint_lift",
+            "joint_arm",
+            "joint_wrist_yaw",
+            "joint_wrist_pitch",
+            "joint_wrist_roll",
+            "joint_head_pan",
+            "joint_head_tilt",
+            "gripper_aperture",
+        ]
+        full_body_translate_positions = [
+            BASE_TRANSLATE_M,
+            0.80,
+            ARM_EXTENSION_M,
+            1.0,
+            -0.90,
+            0.60,
+            0.60,
+            -0.60,
+            GRIPPER_APERTURE_M,
+        ]
+        full_body_rotate_positions = [
+            BASE_ROTATE_RAD,
+            0.80,
+            ARM_EXTENSION_M,
+            1.0,
+            -0.90,
+            0.60,
+            0.60,
+            -0.60,
+            GRIPPER_APERTURE_M,
+        ]
+
+        ok_full_body_translate = self._send_single_point_goal(
+            "FullBodyTranslate",
+            full_body_names,
+            full_body_translate_positions,
+        )
+        self._settle_between_goals("FullBodyTranslate")
+        self._log_requested_transforms("after FullBodyTranslate goal")
+
+        ok_full_body_rotate = self._send_single_point_goal(
+            "FullBodyRotate",
+            full_body_rotate_names,
+            full_body_rotate_positions,
+        )
+        self._settle_between_goals("FullBodyRotate")
+        self._log_requested_transforms("after FullBodyRotate goal")
+
+        if ok_fk and ok_ik and ok_full_body_translate and ok_full_body_rotate:
+            self.get_logger().info("FK, IK, and full-body base tests passed.")
             return 0
 
         self.get_logger().error("One or more tests failed.")
@@ -221,6 +288,16 @@ class IKFKTestClient(Node):
         self.get_logger().info(f"{label} goal succeeded.")
         return True
 
+    def _settle_between_goals(self, label: str) -> None:
+        if self._settle_time_s <= 0.0:
+            return
+        self.get_logger().info(
+            f"Waiting {self._settle_time_s:.2f}s after {label} for motion settling..."
+        )
+        end_time = time.monotonic() + self._settle_time_s
+        while time.monotonic() < end_time:
+            rclpy.spin_once(self, timeout_sec=0.05)
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -232,13 +309,22 @@ def parse_args() -> argparse.Namespace:
         default=3.0,
         help="Trajectory point duration in seconds (default: 3.0).",
     )
+    parser.add_argument(
+        "--settle-time",
+        type=float,
+        default=1.0,
+        help="Extra wait between goals in seconds (default: 1.0).",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     rclpy.init()
-    node = IKFKTestClient(point_duration_s=args.point_duration)
+    node = IKFKTestClient(
+        point_duration_s=args.point_duration,
+        settle_time_s=args.settle_time,
+    )
     try:
         code = node.run()
     finally:
