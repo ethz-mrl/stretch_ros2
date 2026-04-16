@@ -221,9 +221,13 @@ class StretchMujocoDriver(Node):
             )
             self.robot_mode_rwlock.release_read()
             return
-        self.linear_velocity_mps = twist.linear.x
-        self.angular_velocity_radps = twist.angular.z
-        # self.get_logger().warn(f"Current velocities: linear = {self.linear_velocity_mps}, angular = {self.angular_velocity_radps}")
+        # Note: by default, send a linear velocity equal to double the one commanded by Nav2
+        # Then, this can be further adjusted by tuning the t_gain parameter!
+        self.linear_velocity_mps = twist.linear.x * 2 * self.t_gain
+        self.angular_velocity_radps = twist.angular.z * self.r_gain
+        # self.get_logger().warn(
+        #     f"Setting velocities: linear = {self.linear_velocity_mps}, angular = {self.angular_velocity_radps}"
+        # )
         self.last_twist_time = self.get_clock().now()
         self.robot_mode_rwlock.release_read()
 
@@ -321,10 +325,7 @@ class StretchMujocoDriver(Node):
         if self.robot_mode == "navigation":
             time_since_last_twist = self.get_clock().now() - self.last_twist_time
             if time_since_last_twist < self.timeout:
-                gain = 1.5
-                self.sim.set_base_velocity(
-                    self.linear_velocity_mps * gain, self.angular_velocity_radps * gain
-                )
+                self.sim.set_base_velocity(self.linear_velocity_mps, self.angular_velocity_radps)
             elif time_since_last_twist < Duration(seconds=self.timeout_s + 1.0):  # type: ignore
                 # self.sim.set_base_velocity(0.0, 0.0)
                 self.sim.move_by(Actuators.base_translate, 0.0)
@@ -954,6 +955,12 @@ class StretchMujocoDriver(Node):
                 self.get_logger().info(
                     f"Set default_goal_timeout_s to {self.default_goal_timeout_s}"
                 )
+            elif parameter.name == "t_gain":
+                self.t_gain = float(parameter.value)
+                self.get_logger().info(f"Set t_gain to {self.t_gain}")
+            elif parameter.name == "r_gain":
+                self.r_gain = float(parameter.value)
+                self.get_logger().info(f"Set r_gain to {self.r_gain}")
         return SetParametersResult(successful=True)
 
     def home_the_robot(self):
@@ -1043,6 +1050,25 @@ class StretchMujocoDriver(Node):
 
         self.linear_velocity_mps = 0.0  # m/s ROS SI standard for cmd_vel (REP 103)
         self.angular_velocity_radps = 0.0  # rad/s ROS SI standard for cmd_vel (REP 103)
+
+        self.declare_parameter(
+            "t_gain",
+            1.0,
+            ParameterDescriptor(
+                type=ParameterType.PARAMETER_DOUBLE,
+                description="Linear velocity gain applied to cmd_vel twist",
+            ),
+        )
+        self.declare_parameter(
+            "r_gain",
+            1.0,
+            ParameterDescriptor(
+                type=ParameterType.PARAMETER_DOUBLE,
+                description="Angular velocity gain applied to cmd_vel twist",
+            ),
+        )
+        self.t_gain: float = self.get_parameter("t_gain").value
+        self.r_gain: float = self.get_parameter("r_gain").value
 
         self.max_arm_height = 1.1
 
