@@ -9,5 +9,5 @@ stretch_mujoco_driver:
     robocasa_task: PnPCounterToCab
     broadcast_odom_tf: true
     fail_out_of_range_goal: false
-    robot_spawn_pose_pos: "2.0 -2.0 0.0"
+    robot_spawn_pose_pos: "3.0 -2.0 0.0"
     robot_spawn_pose_quat: "0.0 0.0 0.0 1.0"

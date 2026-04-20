@@ -1992,7 +1992,8 @@
         </body>
       </body>
     </body>
-    <body name="coffee_machine_left_group_main" pos="0.259807 -0.876745 1.11" quat="0.707106 0 0 0.707108">
+    <body name="coffee_machine_left_group_main" pos="1.5 -0.25 1.11" quat="1 0 0 0">
+    <!--body name="coffee_machine_left_group_main" pos="0.259807 -0.876745 1.11" quat="0.707106 0 0 0.707108">-->
       <geom name="coffee_machine_left_group_g0" type="mesh" contype="0" conaffinity="0" group="1" friction="0.95 0.3 0.1" solref="0.001" solimp="0.998 0.998" density="100" material="coffee_machine_left_group_back" mesh="coffee_machine_left_group_model_0_vis" />
       <geom name="coffee_machine_left_group_g1" type="mesh" contype="0" conaffinity="0" group="1" friction="0.95 0.3 0.1" solref="0.001" solimp="0.998 0.998" density="100" material="coffee_machine_left_group_White_Plastic" mesh="coffee_machine_left_group_model_1_vis" />
       <geom name="coffee_machine_left_group_g2" type="mesh" contype="0" conaffinity="0" group="1" friction="0.95 0.3 0.1" solref="0.001" solimp="0.998 0.998" density="100" material="coffee_machine_left_group_logo" mesh="coffee_machine_left_group_model_2_vis" />
@@ -2503,7 +2504,9 @@
       <geom name="paper_towel_right_group_g4" size="0.0959265 0.0959265 0.175" type="box" rgba="0.5 0 0 0" />
       <site name="paper_towel_right_group_default_site" pos="0 0 0" size="0.0007" rgba="1 0 0 0" />
     </body>
-    <body name="distr_counter_main" pos="0.6 -0.9 1.0" quat="0.677074 0.0 0.0 -0.7359148">
+    <!-- This is the model that is associated to the Coffee Cup-->
+    <body name="distr_counter_main" pos="1.5 -0.6 1.0" quat="1 0 0 0">
+    <!-- body name="distr_counter_main" pos="0.6 -0.9 1.0" quat="0.677074 0.0 0.0 -0.7359148"-->
       <joint name="distr_counter_joint0" type="free" limited="false" actuatorfrclimited="false" damping="0.0005" />
       <geom name="distr_counter_g0" type="mesh" contype="0" conaffinity="0" group="1" friction="0.95 0.3 0.1" solref="0.001 2" solimp="0.998 0.998" density="100" material="distr_counter_initialShadingGroup.004" mesh="distr_counter_model_normalized_0_vis" />
       <geom name="distr_counter_g1" type="mesh" friction="0.95 0.3 0.1" solref="0.001 2" solimp="0.998 0.998" density="100" rgba="0.8 0.8 0.8 0" mesh="distr_counter_model_normalized_collision_22._coll" />
