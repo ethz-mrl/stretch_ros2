@@ -839,6 +839,14 @@ class StretchMujocoDriver(Node):
         response.message = message
         return response
 
+    def respawn_the_robot_callback(self, request, response):
+        self.get_logger().info("Received respawn_the_robot service call.")
+        self.sim.respawn()
+        self.sim.home()
+        response.success = True
+        response.message = "Respawned and homed the robot."
+        return response
+
     def navigation_mode_service_callback(self, request, response):
         success, message = self.turn_on_navigation_mode()
         response.success = success
@@ -1251,6 +1259,13 @@ class StretchMujocoDriver(Node):
             Trigger,
             "/stow_the_robot",
             self.stow_the_robot_callback,
+            callback_group=self.main_group,
+        )
+
+        self.respawn_the_robot_service = self.create_service(
+            Trigger,
+            "/respawn_the_robot",
+            self.respawn_the_robot_callback,
             callback_group=self.main_group,
         )
 
