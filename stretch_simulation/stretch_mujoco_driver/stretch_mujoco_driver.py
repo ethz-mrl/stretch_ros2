@@ -138,14 +138,14 @@ class StretchMujocoDriver(Node):
             )
 
             # Save
-            # xml_output_path = get_package_share_path("stretch_simulation") / "config" / "generated_scene.xml"
-            # xml_output_path.write_text(xml)
+            # xml_scene_path = get_package_share_path("stretch_simulation") / "config" / "generated_scene.xml"
+            # xml_scene_path.write_text(xml)
 
             # Load
-            xml_output_path = (
+            xml_scene_path = (
                 get_package_share_path("stretch_simulation") / "config" / "coffee_scene.xml"
             )
-            model = mujoco.MjModel.from_xml_string(xml_output_path.read_text())  # type: ignore
+            model = mujoco.MjModel.from_xml_string(xml_scene_path.read_text())  # type: ignore
 
         sim = StretchMujocoSimulator(
             model=model,
