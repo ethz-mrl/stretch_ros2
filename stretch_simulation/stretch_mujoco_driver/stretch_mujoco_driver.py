@@ -35,10 +35,11 @@ from rclpy.node import Node
 from rclpy.parameter import Parameter
 
 from geometry_msgs.msg import Twist
-from geometry_msgs.msg import TransformStamped
+from geometry_msgs.msg import Pose, TransformStamped
 
 from std_srvs.srv import Trigger
 from std_srvs.srv import SetBool
+from stretch_simulation_interfaces.srv import TeleportRobot
 
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import CameraInfo
@@ -70,7 +71,6 @@ from ament_index_python.packages import get_package_share_path
 
 
 from rclpy import time as rclpyTime
-
 
 DEFAULT_TIMEOUT = 0.5
 DEFAULT_GOAL_TIMEOUT = 10.0
@@ -847,6 +847,21 @@ class StretchMujocoDriver(Node):
         response.message = "Respawned and homed the robot."
         return response
 
+    def teleport_the_robot_callback(self, request, response):
+        self.get_logger().info("Received teleport_the_robot service call.")
+        pose = request.pose
+        position = (pose.position.x, pose.position.y, pose.position.z)
+        rotation_quat = (
+            pose.orientation.w,
+            pose.orientation.x,
+            pose.orientation.y,
+            pose.orientation.z,
+        )
+        self.sim.teleport(position=position, rotation_quat=rotation_quat)
+        response.success = True
+        response.message = f"Teleported robot to position={position}, quaternion={rotation_quat}."
+        return response
+
     def navigation_mode_service_callback(self, request, response):
         success, message = self.turn_on_navigation_mode()
         response.success = success
@@ -921,13 +936,13 @@ class StretchMujocoDriver(Node):
                     "_open", ""
                 )  # A different mapping from stretch_core command_groups
 
-            joint_limits.name.append(joint_name)  # type:ignore
+            joint_limits.name.append(joint_name)  # type: ignore
             joint_limits.position.append(min_limit)
             joint_limits.velocity.append(max_limit)
 
         # add "wrist_extension" because it's expected downstream
         arm_joint_limit = joint_limits_from_sim[Actuators.arm]
-        joint_limits.name.append("wrist_extension")  # type:ignore
+        joint_limits.name.append("wrist_extension")  # type: ignore
         joint_limits.position.append(arm_joint_limit[0])
         joint_limits.velocity.append(arm_joint_limit[1] * 4)  # 4x the telescoping limit
 
@@ -1266,6 +1281,13 @@ class StretchMujocoDriver(Node):
             Trigger,
             "/respawn_the_robot",
             self.respawn_the_robot_callback,
+            callback_group=self.main_group,
+        )
+
+        self.teleport_the_robot_service = self.create_service(
+            TeleportRobot,
+            "/teleport_the_robot",
+            self.teleport_the_robot_callback,
             callback_group=self.main_group,
         )
 

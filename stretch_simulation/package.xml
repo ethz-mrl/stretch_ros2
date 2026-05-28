@@ -24,6 +24,7 @@
   <depend>sensor_msgs</depend>
   <depend>sensor_msgs_py</depend>
   <depend>std_srvs</depend>
+  <depend>stretch_simulation_interfaces</depend>
   <depend>tf_transformations</depend>
   <depend>tf2_ros</depend>
   <depend>laser_filters</depend>
