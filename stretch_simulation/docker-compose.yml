@@ -26,6 +26,7 @@ services:
       # Mount local source code for development
       - ./:/root/ament_ws/src/stretch_ros2/stretch_simulation:rw
       - ../stretch_nav2/:/root/ament_ws/src/stretch_ros2/stretch_nav2:rw
+      - ../stretch_simulation_interfaces/:/root/ament_ws/src/stretch_ros2/stretch_simulation_interfaces:rw
       # Set STRETCH_MUJOCO_HOST_DIR in your shell or .env to your local stretch_mujoco path
       - ${STRETCH_MUJOCO_HOST_DIR}:/root/repos/stretch_mujoco:rw
     deploy:
