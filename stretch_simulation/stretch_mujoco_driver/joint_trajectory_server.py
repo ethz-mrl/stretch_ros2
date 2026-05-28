@@ -1,28 +1,12 @@
 #! /usr/bin/env python3
 
 from functools import cache
-import time
-import copy
-import pickle
-from pathlib import Path
-from hello_helpers.hello_misc import *
-from hello_helpers.simple_command_group import SimpleCommandGroup
+
+from control_msgs.action import FollowJointTrajectory
+from rclpy.action import ActionServer, CancelResponse, GoalResponse
 from rclpy.action.server import ServerGoalHandle
 
 from control_msgs.action import FollowJointTrajectory
-
-import threading
-
-import rclpy
-from rclpy.action import ActionServer, CancelResponse, GoalResponse
-from rclpy.duration import Duration
-
-from control_msgs.action import FollowJointTrajectory
-from trajectory_msgs.msg import (
-    JointTrajectoryPoint,
-    MultiDOFJointTrajectory,
-    JointTrajectory,
-)
 
 import hello_helpers.hello_misc as hm
 
@@ -32,14 +16,6 @@ if TYPE_CHECKING:
     from stretch_mujoco_driver.stretch_mujoco_driver import StretchMujocoDriver
 
 from stretch_mujoco.enums.actuators import Actuators
-
-import rclpy
-import rclpy.action
-from rclpy.node import Node
-from control_msgs.action import FollowJointTrajectory
-from trajectory_msgs.msg import JointTrajectoryPoint
-from rclpy.action import ActionServer
-from rclpy.executors import MultiThreadedExecutor
 
 
 class JointTrajectoryAction:
