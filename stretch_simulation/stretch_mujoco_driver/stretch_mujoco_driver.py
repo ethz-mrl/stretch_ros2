@@ -39,7 +39,7 @@ from geometry_msgs.msg import Pose, TransformStamped
 
 from std_srvs.srv import Trigger
 from std_srvs.srv import SetBool
-from stretch_simulation_interfaces.srv import TeleportRobot
+from stretch_simulation_interfaces.srv import TeleportRobot, TeleportObject
 
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import CameraInfo
@@ -862,6 +862,27 @@ class StretchMujocoDriver(Node):
         response.message = f"Teleported robot to position={position}, quaternion={rotation_quat}."
         return response
 
+    def teleport_object_callback(self, request, response):
+        self.get_logger().info(
+            f"Received teleport_object service call for '{request.object_name}'."
+        )
+        pose = request.pose
+        position = (pose.position.x, pose.position.y, pose.position.z)
+        rotation_quat = (
+            pose.orientation.w,
+            pose.orientation.x,
+            pose.orientation.y,
+            pose.orientation.z,
+        )
+        self.sim.teleport_object(
+            object_name=request.object_name,
+            position=position,
+            rotation_quat=rotation_quat,
+        )
+        response.success = True
+        response.message = f"Teleported '{request.object_name}' to position={position}, quaternion={rotation_quat}."
+        return response
+
     def navigation_mode_service_callback(self, request, response):
         success, message = self.turn_on_navigation_mode()
         response.success = success
@@ -1288,6 +1309,13 @@ class StretchMujocoDriver(Node):
             TeleportRobot,
             "/teleport_the_robot",
             self.teleport_the_robot_callback,
+            callback_group=self.main_group,
+        )
+
+        self.teleport_object_service = self.create_service(
+            TeleportObject,
+            "/teleport_object",
+            self.teleport_object_callback,
             callback_group=self.main_group,
         )
 
