@@ -39,7 +39,7 @@ from geometry_msgs.msg import Pose, TransformStamped
 
 from std_srvs.srv import Trigger
 from std_srvs.srv import SetBool
-from stretch_simulation_interfaces.srv import TeleportRobot, TeleportObject
+from stretch_simulation_interfaces.srv import TeleportRobot, TeleportObject, SpawnObjectInGripper
 
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import CameraInfo
@@ -883,6 +883,17 @@ class StretchMujocoDriver(Node):
         response.message = f"Teleported '{request.object_name}' to position={position}, quaternion={rotation_quat}."
         return response
 
+    def spawn_object_in_gripper_callback(self, request, response):
+        self.get_logger().info(
+            f"Received spawn_object_in_gripper service call for '{request.object_name}'."
+        )
+        self.sim.move_by(Actuators.gripper, 0.1)
+        self.sim.wait_until_at_setpoint(Actuators.gripper)
+        self.sim.spawn_object_in_gripper(request.object_name)
+        response.success = True
+        response.message = f"Spawned '{request.object_name}' in gripper."
+        return response
+
     def navigation_mode_service_callback(self, request, response):
         success, message = self.turn_on_navigation_mode()
         response.success = success
@@ -1316,6 +1327,13 @@ class StretchMujocoDriver(Node):
             TeleportObject,
             "/teleport_object",
             self.teleport_object_callback,
+            callback_group=self.main_group,
+        )
+
+        self.spawn_object_in_gripper_service = self.create_service(
+            SpawnObjectInGripper,
+            "/spawn_object_in_gripper",
+            self.spawn_object_in_gripper_callback,
             callback_group=self.main_group,
         )
 
