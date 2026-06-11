@@ -109,7 +109,7 @@ RUN --mount=type=ssh /bin/bash -c "if [ -n \"${STRETCH_ROS2_REPO_URL}\" ]; then 
     rm -rf build install log && \
     source /opt/ros/humble/setup.bash && \
     rosdep install --rosdistro=humble -iy --skip-keys=\"librealsense2 realsense2_camera\" --from-paths src && \
-    colcon build; \
+    colcon build --symlink-install; \
 fi"
 
 # Source ament_ws setup in bashrc

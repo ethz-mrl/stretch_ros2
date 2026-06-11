@@ -32,7 +32,7 @@ python3 third_party/robocasa/robocasa/scripts/download_kitchen_assets.py
 # Colcon Build:
 cd ~/ament_ws
 
-colcon build
+colcon build --symlink-install
 
 source ./install/setup.bash
 

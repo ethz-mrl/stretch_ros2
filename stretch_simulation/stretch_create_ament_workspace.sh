@@ -200,5 +200,5 @@ set -e
 cd $HOME/ament_ws
 
 rosdep install --rosdistro=humble -iy --skip-keys="librealsense2 realsense2_camera" --from-paths src
-colcon build
+colcon build --symlink-install
 source ./install/setup.bash
