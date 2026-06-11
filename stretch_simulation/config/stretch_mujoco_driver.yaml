@@ -4,7 +4,9 @@ stretch_mujoco_driver:
     mode: navigation
     use_robocasa: true
     robocasa_layout: G-shaped
-    robocasa_style: Modern_2
+    robocasa_style: Modern_1
+    scene_package: stretch_simulation
+    scene_file: coffee_scene
     use_cameras: false
     robocasa_task: PnPCounterToCab
     broadcast_odom_tf: true

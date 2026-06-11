@@ -91,6 +91,8 @@ class StretchMujocoDriver(Node):
         self.declare_parameter("robocasa_task", DEFAULT_ROBOCASA_TASK)
         self.declare_parameter("robocasa_layout", None)
         self.declare_parameter("robocasa_style", None)
+        self.declare_parameter("scene_package", None)
+        self.declare_parameter("scene_file", None)
         self.declare_parameter("robot_spawn_pose_pos", "2.0 -2.0 0.0")
         self.declare_parameter("robot_spawn_pose_quat", "0.0 0.0 0.0 1.0")
 
@@ -137,15 +139,21 @@ class StretchMujocoDriver(Node):
                 robot_spawn_pose=robot_spawn_pose,
             )
 
-            # Save
-            # xml_scene_path = get_package_share_path("stretch_simulation") / "config" / "generated_scene.xml"
-            # xml_scene_path.write_text(xml)
-
             # Load
-            xml_scene_path = (
-                get_package_share_path("stretch_simulation") / "config" / "coffee_scene.xml"
-            )
-            model = mujoco.MjModel.from_xml_string(xml_scene_path.read_text())  # type: ignore
+            pkg = self.get_parameter("scene_package").value
+            pkg = pkg if pkg is not None else "stretch_simulation"
+            file = self.get_parameter("scene_file").value
+            if file is not None:
+                file += ".xml"
+                xml_scene_path = get_package_share_path(pkg) / "config" / file
+                model = mujoco.MjModel.from_xml_string(xml_scene_path.read_text())  # type: ignore
+
+            # Save
+            else:
+                xml_scene_path = (
+                    get_package_share_path(pkg) / "config" / "last_generated_scene.xml"
+                )
+                xml_scene_path.write_text(xml)
 
         sim = StretchMujocoSimulator(
             model=model,
