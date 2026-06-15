@@ -341,8 +341,7 @@ class StretchMujocoDriver(Node):
             if time_since_last_twist < self.timeout:
                 self.sim.set_base_velocity(self.linear_velocity_mps, self.angular_velocity_radps)
             elif time_since_last_twist < Duration(seconds=self.timeout_s + 1.0):  # type: ignore
-                # self.sim.set_base_velocity(0.0, 0.0)
-                self.sim.move_by(Actuators.base_translate, 0.0)
+                self.sim.set_base_velocity(0.0, 0.0)
             else:
                 self.sim.set_base_velocity(0.0, 0.0)
 
