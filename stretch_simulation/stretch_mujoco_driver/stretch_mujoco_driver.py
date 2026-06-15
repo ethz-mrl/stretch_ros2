@@ -39,7 +39,13 @@ from geometry_msgs.msg import Pose, TransformStamped
 
 from std_srvs.srv import Trigger
 from std_srvs.srv import SetBool
-from stretch_simulation_interfaces.srv import TeleportRobot, TeleportObject, SpawnObjectInGripper
+from stretch_simulation_interfaces.msg import RobotContacts
+from stretch_simulation_interfaces.srv import (
+    TeleportRobot,
+    TeleportObject,
+    SpawnObjectInGripper,
+)
+from stretch_mujoco.contact_logger import _BASE_BODIES, _ALL_ROBOT_BODIES
 
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import CameraInfo
@@ -677,6 +683,7 @@ class StretchMujocoDriver(Node):
 
         self.prev_runstop_state = runstop_event.data
 
+        self.publish_robot_contacts()
         self.publish_camera_and_lidar(current_time=current_time)
 
     def publish_camera_and_lidar(self, current_time: TimeMsg | None = None):
@@ -1004,6 +1011,39 @@ class StretchMujocoDriver(Node):
         #     f"is self collision avoidance enabled: {enable_self_collision_avoidance}"
         # )
         return response
+
+    def publish_robot_contacts(self):
+        contacts = self.sim.pull_contacts()
+        seen: set[tuple[str, str]] = set()
+        robot_parts: list[str] = []
+        contact_items: list[str] = []
+
+        for c in contacts.contacts:
+            b1, b2 = c.body1_name, c.body2_name
+            # Skip base/wheel contacts with the floor (expected during navigation)
+            if (b1 in _BASE_BODIES and b2.startswith("floor_")) or (
+                b2 in _BASE_BODIES and b1.startswith("floor_")
+            ):
+                continue
+
+            # Identify which body is the robot part and which is the external item
+            if b1 in _ALL_ROBOT_BODIES:
+                robot_part, item = b1, b2
+            else:
+                robot_part, item = b2, b1
+
+            pair = (robot_part, item)
+            if pair in seen:
+                continue
+            seen.add(pair)
+
+            robot_parts.append(robot_part)
+            contact_items.append(item)
+
+        msg = RobotContacts()
+        msg.robot_parts = robot_parts
+        msg.contact_items = contact_items
+        self.robot_contacts_pub.publish(msg)
 
     def parameter_callback(self, parameters: list[Parameter]) -> SetParametersResult:
         """
@@ -1372,6 +1412,8 @@ class StretchMujocoDriver(Node):
             self.self_collision_avoidance_callback,
             callback_group=self.main_group,
         )
+
+        self.robot_contacts_pub = self.create_publisher(RobotContacts, "/robot_contacts", 10)
 
         # start action server for joint trajectories
         self.declare_parameter("fail_out_of_range_goal", False)
