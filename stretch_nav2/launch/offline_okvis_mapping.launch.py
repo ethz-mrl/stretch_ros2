@@ -122,6 +122,34 @@ def generate_launch_description():
     okvis_sensor_frame = static_tf(
         'okvis_sensor_frame', 'camera_gyro_optical_frame', 'camera_okvis_sensor_frame')
 
+    # --- 2D occupancy mapping with KNOWN POSES (OKVIS), no extra SLAM ---
+    # octomap_server integrates the lidar using the sensor->map transform from TF
+    # (driven solely by OKVIS); it does no pose estimation of its own. It wants a
+    # PointCloud2, so convert the rplidar /scan first. Output: /projected_map (2D
+    # OccupancyGrid), savable with `ros2 run nav2_map_server map_saver_cli -t /projected_map`.
+    scan_to_cloud = Node(
+        package='pointcloud_to_laserscan', executable='laserscan_to_pointcloud_node',
+        name='scan_to_cloud', output='screen',
+        # target_frame must be set: the node's tf2 MessageFilter never fires when it is
+        # blank. Keep the cloud in the lidar frame so octomap raycasts from the true
+        # sensor origin (transforming laser->map itself via the OKVIS TF chain).
+        parameters=[{'target_frame': 'laser', 'transform_tolerance': 0.05}],
+        remappings=[('scan_in', '/scan'), ('cloud', '/lidar_cloud')])
+
+    octomap_server = Node(
+        package='octomap_server', executable='octomap_server_node', name='octomap_server',
+        output='screen',
+        parameters=[{
+            'resolution': 0.05,
+            'frame_id': 'map',            # accumulate in the OKVIS-anchored, floor-level map frame
+            'base_frame_id': 'base_link',
+            'sensor_model.max_range': 10.0,
+            'filter_ground': False,       # single horizontal lidar ring, nothing to filter
+            'latch': True,                # publish /projected_map transient_local (latched)
+                                          # so RViz Map display and map_saver_cli can receive it
+        }],
+        remappings=[('cloud_in', '/lidar_cloud')])
+
     ld = LaunchDescription([
         rviz_param,
         teleop_type,
@@ -135,6 +163,8 @@ def generate_launch_description():
         map_anchor,
         imu_qos_bridge,
         okvis_sensor_frame,
+        scan_to_cloud,
+        octomap_server,
     ])
 
     return ld
