@@ -1,8 +1,10 @@
 import os
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, GroupAction, IncludeLaunchDescription
+from launch.actions import (DeclareLaunchArgument, GroupAction, IncludeLaunchDescription,
+                            LogInfo, RegisterEventHandler, TimerAction)
 from launch.conditions import IfCondition
+from launch.event_handlers import OnProcessExit
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_xml.launch_description_sources import XMLLaunchDescriptionSource
@@ -98,17 +100,20 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration('use_rviz')))
 
     # OKVIS via the subscriber node: unlike okvis_node_realsense, it does NOT open the
-    # camera; it only subscribes to /okvis/cam0|cam1/image_raw
-    okvis_launch = IncludeLaunchDescription(
-        XMLLaunchDescriptionSource([
-            os.path.join(okvis_package, 'launch', 'okvis_node_subscriber.launch.xml')
-        ]),
-        launch_arguments={
-            'rviz': 'false',
-            # 2-camera stereo-IR config (no RGB "map" camera) is enough for state estimation
-            'config_filename': os.path.join(okvis_package, 'config', 'realsense_D435if_stretch_bag.yaml'),
-        }.items()
-    )
+    # camera; it only subscribes to /okvis/cam0|cam1/image_raw. Built via a factory so
+    # a fresh action can be handed to whichever startup branch runs below (the same
+    # launch action object must not be reused in two places).
+    def make_okvis_launch():
+        return IncludeLaunchDescription(
+            XMLLaunchDescriptionSource([
+                os.path.join(okvis_package, 'launch', 'okvis_node_subscriber.launch.xml')
+            ]),
+            launch_arguments={
+                'rviz': 'false',
+                # 2-camera stereo-IR config (no RGB "map" camera) is enough for state estimation
+                'config_filename': os.path.join(okvis_package, 'config', 'realsense_D435if_stretch_bag.yaml'),
+            }.items()
+        )
 
     # Live RealSense D435i as the OKVIS input source. Enable stereo IR (infra1/infra2,
     # 640x480 Y8) + a united gyro/accel IMU, then remap the driver's native topics onto
@@ -226,6 +231,9 @@ def generate_launch_description():
     # One-shot manipulation posture at startup. Driver is in gamepad mode, which
     # rejects joint trajectory goals, so switch to position to command, then restore
     # gamepad for teleop driving (base is untouched by the posture).
+    # For mapping, lower the arm 20 cm along z vs the default posture (lift 0.78 ->
+    # 0.58) so the raised arm is less likely to occlude the sensors / snag while
+    # teleoperating the map.
     startup_posture = Node(
         package='stretch_aruco_localizer', executable='go_to_posture',
         name='go_to_posture', output='screen',
@@ -233,7 +241,35 @@ def generate_launch_description():
             ["'", LaunchConfiguration('startup_posture'), "' == 'true'"])),
         parameters=[{'include_head': LaunchConfiguration('include_head'),
                      'move_mode': 'position',
-                     'restore_mode': 'gamepad'}])
+                     'restore_mode': 'gamepad',
+                     'joint_lift': 0.58,
+                     # Keep the head level (do NOT tilt down): the default posture
+                     # tilts the head -pi/4 to look at the arm, but a downward tilt
+                     # points the camera at the floor and hurts OKVIS. Override to 0.
+                     'joint_head_tilt': 0.0}])
+
+    # Defer OKVIS until the startup posture has finished moving AND the arm/lift have
+    # settled for a few seconds. OKVIS bootstraps its VI-SLAM from the first frames, so
+    # arm motion / vibration in view during initialization degrades the estimate.
+    # go_to_posture is one-shot (it exits once the posture is reached), so start a short
+    # settle timer on its exit and only THEN bring OKVIS up.
+    #   startup_posture:=true  -> posture move -> wait settle -> OKVIS  (event handler)
+    #   startup_posture:=false -> nothing to wait for          -> OKVIS starts directly
+    okvis_settle_sec = 3.0
+    okvis_after_posture = RegisterEventHandler(
+        OnProcessExit(
+            target_action=startup_posture,
+            on_exit=[
+                LogInfo(msg=('go_to_posture finished; settling '
+                             f'{okvis_settle_sec:.0f}s before starting OKVIS')),
+                TimerAction(period=okvis_settle_sec, actions=[make_okvis_launch()]),
+            ]),
+        condition=IfCondition(PythonExpression(
+            ["'", LaunchConfiguration('startup_posture'), "' == 'true'"])))
+    okvis_no_posture = GroupAction(
+        [make_okvis_launch()],
+        condition=IfCondition(PythonExpression(
+            ["'", LaunchConfiguration('startup_posture'), "' == 'false'"])))
 
     ld = LaunchDescription([
         rviz_param,
@@ -248,7 +284,8 @@ def generate_launch_description():
         rplidar_launch,
         rviz_launch,
         realsense_launch,
-        okvis_launch,
+        okvis_after_posture,
+        okvis_no_posture,
         map_to_odom,
         map_anchor,
         imu_qos_bridge,

@@ -4,8 +4,10 @@ import tempfile
 import yaml
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, GroupAction, IncludeLaunchDescription
+from launch.actions import (DeclareLaunchArgument, GroupAction, IncludeLaunchDescription,
+                            LogInfo, RegisterEventHandler, TimerAction)
 from launch.conditions import IfCondition
+from launch.event_handlers import OnProcessExit
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_xml.launch_description_sources import XMLLaunchDescriptionSource
@@ -248,23 +250,28 @@ def generate_launch_description():
     # Run OKVIS with loop closures ENABLED (full VI-SLAM, do_loop_closures:true from the
     # stock config). Loop closures re-optimize the pose graph and can make odom->base_link
     # jump discretely; AMCL/costmap must tolerate that.
-    okvis_launch = GroupAction([
-        SetRemap('/odom', '/okvis/wheel_odom_disabled'),
-        # Keep OKVIS's raw 6-DoF TF off Nav2's TF tree. nav_tf_bridge relays the
-        # robot/head transforms into these private topics and publishes a planar
-        # world->base_link on the global /tf topic.
-        SetRemap('/tf', '/okvis/tf_raw'),
-        SetRemap('/tf_static', '/okvis/tf_static_raw'),
-        IncludeLaunchDescription(
-            XMLLaunchDescriptionSource([
-                os.path.join(okvis_package, 'launch', 'okvis_node_subscriber.launch.xml')
-            ]),
-            launch_arguments={
-                'rviz': 'false',
-                'config_filename': os.path.join(
-                    okvis_package, 'config', 'realsense_D435if_stretch_bag.yaml'),
-            }.items()),
-    ])
+    # Built via a factory so a fresh action can be handed to whichever startup branch
+    # runs below (the same launch action object must not be reused in two places). The
+    # SetRemaps live inside the returned GroupAction, so its scoping is preserved even
+    # when the group is deferred by a TimerAction.
+    def make_okvis_launch(condition=None):
+        return GroupAction([
+            SetRemap('/odom', '/okvis/wheel_odom_disabled'),
+            # Keep OKVIS's raw 6-DoF TF off Nav2's TF tree. nav_tf_bridge relays the
+            # robot/head transforms into these private topics and publishes a planar
+            # world->base_link on the global /tf topic.
+            SetRemap('/tf', '/okvis/tf_raw'),
+            SetRemap('/tf_static', '/okvis/tf_static_raw'),
+            IncludeLaunchDescription(
+                XMLLaunchDescriptionSource([
+                    os.path.join(okvis_package, 'launch', 'okvis_node_subscriber.launch.xml')
+                ]),
+                launch_arguments={
+                    'rviz': 'false',
+                    'config_filename': os.path.join(
+                        okvis_package, 'config', 'realsense_D435if_stretch_bag.yaml'),
+                }.items()),
+        ], condition=condition)
 
     okvis_nav_tf_bridge = Node(
         package='stretch_okvis', executable='nav_tf_bridge',
@@ -395,7 +402,36 @@ def generate_launch_description():
         package='stretch_aruco_localizer', executable='go_to_posture',
         name='go_to_posture', output='screen',
         condition=IfCondition(LaunchConfiguration('startup_posture')),
-        parameters=[{'include_head': LaunchConfiguration('include_head')}])
+        # Same start position as offline_okvis_mapping: lift lowered to 0.58 and the
+        # head kept LEVEL (joint_head_tilt 0.0, not the default -pi/4 downward tilt,
+        # which points the camera at the floor and hurts OKVIS).
+        parameters=[{'include_head': LaunchConfiguration('include_head'),
+                     'joint_lift': 0.58,
+                     'joint_head_tilt': 0.0}])
+
+    # Waiting strategy (mirrors offline_okvis_mapping): defer OKVIS until the startup
+    # posture has finished moving AND the arm/lift have settled a few seconds. OKVIS
+    # bootstraps its VI-SLAM from the first frames, so arm motion / vibration in view
+    # during init degrades the estimate. go_to_posture is one-shot (exits once the
+    # posture is reached), so start a settle timer on its exit and only THEN bring
+    # OKVIS up. Only OKVIS is deferred; Nav2 lifecycle already waits for the transforms
+    # OKVIS provides, so it simply activates once they appear.
+    #   startup_posture:=true  -> posture move -> wait settle -> OKVIS  (event handler)
+    #   startup_posture:=false -> nothing to wait for          -> OKVIS starts directly
+    okvis_settle_sec = 3.0
+    okvis_after_posture = RegisterEventHandler(
+        OnProcessExit(
+            target_action=startup_posture,
+            on_exit=[
+                LogInfo(msg=('go_to_posture finished; settling '
+                             f'{okvis_settle_sec:.0f}s before starting OKVIS')),
+                TimerAction(period=okvis_settle_sec, actions=[make_okvis_launch()]),
+            ]),
+        condition=IfCondition(PythonExpression(
+            ["'", LaunchConfiguration('startup_posture'), "' == 'true'"])))
+    okvis_no_posture = make_okvis_launch(
+        condition=IfCondition(PythonExpression(
+            ["'", LaunchConfiguration('startup_posture'), "' == 'false'"])))
 
     # ---------------- nav2 planning/control ----------------
     # Reuse Stretch's navigation launcher rather than nav2_bringup's upstream launcher.
@@ -432,7 +468,8 @@ def generate_launch_description():
         rplidar_launch,
         realsense_launch,
         okvis_nav_tf_bridge,
-        okvis_launch,
+        okvis_after_posture,
+        okvis_no_posture,
         map_anchor,
         imu_qos_bridge,
         # relocalization (map -> odom)
