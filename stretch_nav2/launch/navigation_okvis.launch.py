@@ -381,10 +381,20 @@ def generate_launch_description():
         parameters=[{'use_sim_time': use_sim_time, 'autostart': autostart,
                      'node_names': ['map_server']}])
 
-    aruco_detect = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource([stretch_core_path, '/launch/stretch_aruco.launch.py']),
-        launch_arguments={'aruco_dict': 'DICT_5X5_1000'}.items(),
-        condition=use_aruco)
+    # ChArUco board detector (replaces the single-marker stretch_core detector).
+    # Publishes the board pose as TF camera_color_optical_frame -> <marker_name>,
+    # which aruco_relocalizer consumes exactly as before. Board matches the calib.io
+    # 4x3 / 48 mm / 36 mm / DICT_4X4 print (calib.io names it "3x4").
+    aruco_detect = Node(
+        package='stretch_aruco_localizer', executable='charuco_detector',
+        name='charuco_detector', output='screen', condition=use_aruco,
+        parameters=[{
+            'squares_x': 4, 'squares_y': 3,
+            'square_length_m': 0.048, 'marker_length_m': 0.036,
+            'aruco_dict': 'DICT_4X4_50', 'legacy_pattern': True,
+            'min_charuco_corners': 4,
+            'marker_name': marker_name,
+        }])
 
     anchor_yaml_path = PythonExpression(
         ["'", map_yaml, "'.replace('.yaml', '_anchor.yaml')"])

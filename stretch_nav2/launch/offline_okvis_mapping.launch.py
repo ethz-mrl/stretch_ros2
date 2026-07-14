@@ -211,10 +211,20 @@ def generate_launch_description():
         remappings=[('cloud_in', '/lidar_cloud')])
 
     # Phase-1 anchor recording (only when record_anchor:=true).
-    aruco_detect = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource([stretch_core_path, '/launch/stretch_aruco.launch.py']),
-        launch_arguments={'aruco_dict': 'DICT_5X5_1000'}.items(),
-        condition=use_anchor)
+    # ChArUco board detector (replaces the single-marker stretch_core detector).
+    # Publishes the board pose as TF camera_color_optical_frame -> <marker_name>,
+    # which aruco_anchor_recorder consumes exactly as before. Board matches the
+    # calib.io 4x3 / 48 mm / 36 mm / DICT_4X4 print (calib.io names it "3x4").
+    aruco_detect = Node(
+        package='stretch_aruco_localizer', executable='charuco_detector',
+        name='charuco_detector', output='screen', condition=use_anchor,
+        parameters=[{
+            'squares_x': 4, 'squares_y': 3,
+            'square_length_m': 0.048, 'marker_length_m': 0.036,
+            'aruco_dict': 'DICT_4X4_50', 'legacy_pattern': True,
+            'min_charuco_corners': 4,
+            'marker_name': marker_name,
+        }])
     aruco_anchor_recorder = Node(
         package='stretch_aruco_localizer', executable='aruco_anchor_recorder',
         name='aruco_anchor_recorder', output='screen', condition=use_anchor,
