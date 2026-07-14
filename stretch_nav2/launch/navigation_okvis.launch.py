@@ -25,10 +25,16 @@ def _write_okvis_nav_params(source_params, bt_nav_to_pose, bt_nav_through_poses)
         cfg = yaml.safe_load(f)
 
     cs = cfg['controller_server']['ros__parameters']
-    # Tight goal tolerances for accurate arrival (was 0.25 / 0.25).
+    # Arrival tolerance (general_goal_checker) = when Nav2 declares the goal reached.
     cs['general_goal_checker']['xy_goal_tolerance'] = 0.05
-    cs['general_goal_checker']['yaw_goal_tolerance'] = 0.5
-    cs['FollowPath']['xy_goal_tolerance'] = 0.5
+    cs['general_goal_checker']['yaw_goal_tolerance'] = 0.10
+    # DWB's RotateToGoal critic forces PURE ROTATION once within
+    # FollowPath.xy_goal_tolerance of the goal. This MUST be <= the goal checker's
+    # xy tolerance; otherwise the robot flips to rotate-only while still too far in
+    # xy to ever satisfy completion, so it spins forever and never drives the last
+    # stretch (the "controller replans, base doesn't move" deadlock). Keep it equal
+    # so rotate-to-goal begins exactly at the arrival radius.
+    cs['FollowPath']['xy_goal_tolerance'] = cs['general_goal_checker']['xy_goal_tolerance']
     # Must nearly stop before the final rotate-to-goal, so it settles precisely.
     cs['FollowPath']['trans_stopped_velocity'] = 0.05
 
@@ -145,17 +151,43 @@ def generate_launch_description():
 
     reloc_param = DeclareLaunchArgument(
         'reloc', default_value='amcl',
-        choices=['amcl', 'amcl_oneshot', 'none', 'hloc'],
+        choices=['amcl', 'amcl_oneshot', 'none', 'hloc', 'aruco'],
         description="How map->odom (relocalization) is provided: 'amcl' (lidar vs "
                     "saved grid, continuous), 'amcl_oneshot' (AMCL corrects the initial "
                     "2D Pose Estimate ONCE, then freezes map->odom so OKVIS carries a "
-                    "smooth pose with no further jumps) or 'none' (identity static; "
-                    "map == start pose)")
+                    "smooth pose with no further jumps), 'none' (identity static; "
+                    "map == start pose) or 'aruco' (a fixed ArUco marker anchors "
+                    "map->odom; requires a recorded <map>_anchor.yaml sidecar)")
+
+    # For reloc:=aruco. marker_name defaults empty -> the relocalizer uses the name
+    # stored in the anchor sidecar. aruco_mode picks single_shot vs periodic.
+    marker_name_param = DeclareLaunchArgument(
+        'marker_name', default_value='map_anchor',
+        description="reloc:=aruco: marker NAME from stretch_marker_dict.yaml to anchor "
+                    "on (default 'map_anchor', the 5x5 id-777 entry). Empty => use the "
+                    "name recorded in the anchor sidecar.")
+    aruco_mode_param = DeclareLaunchArgument(
+        'aruco_mode', default_value='single_shot',
+        choices=['single_shot', 'periodic'],
+        description="reloc:=aruco: 'single_shot' (fix once, freeze) or 'periodic' "
+                    "(re-anchor on every fresh sighting to bound VIO drift)")
+
+    # Move to the manipulation posture on startup (one-shot). NOTE include_head:=true
+    # turns the head camera to the arm, which disables OKVIS VIO + ArUco while turned.
+    startup_posture_param = DeclareLaunchArgument(
+        'startup_posture', default_value='true', choices=['true', 'false'],
+        description='Move to the manipulation posture at startup')
+    include_head_param = DeclareLaunchArgument(
+        'include_head', default_value='true', choices=['true', 'false'],
+        description='Include head pan/tilt in the startup posture (points camera at '
+                    'the arm; breaks OKVIS/ArUco while turned)')
 
     use_sim_time = LaunchConfiguration('use_sim_time')
     autostart = LaunchConfiguration('autostart')
     map_yaml = LaunchConfiguration('map')
     reloc = LaunchConfiguration('reloc')
+    marker_name = LaunchConfiguration('marker_name')
+    aruco_mode = LaunchConfiguration('aruco_mode')
 
     # ALL OKVIS-navigation param overrides live here (see _write_okvis_nav_params):
     # goal tolerances, inflation, wait-only recovery + BT-xml, and voxel origin_z. The
@@ -174,6 +206,15 @@ def generate_launch_description():
         PythonExpression(["'", reloc, "' in ('amcl', 'amcl_oneshot')"]))
     use_oneshot = IfCondition(PythonExpression(["'", reloc, "' == 'amcl_oneshot'"]))
     no_reloc = IfCondition(PythonExpression(["'", reloc, "' == 'none'"]))
+    use_aruco = IfCondition(PythonExpression(["'", reloc, "' == 'aruco'"]))
+    # map_server serves the saved grid for the costmap static layer under amcl,
+    # amcl_oneshot AND aruco (all navigate in the saved map). aruco just doesn't run AMCL.
+    use_map_server = IfCondition(
+        PythonExpression(["'", reloc, "' in ('amcl', 'amcl_oneshot', 'aruco')"]))
+    # RealSense color + aligned depth are needed ONLY for aruco (detect_aruco_markers
+    # consumes /camera/color + /camera/aligned_depth_to_color). Off otherwise so OKVIS
+    # keeps the IR/IMU bandwidth to itself.
+    aruco_stream = PythonExpression(["'true' if '", reloc, "' == 'aruco' else 'false'"])
 
     # ---------------- OKVIS state-estimation stack (from offline_okvis_mapping) ----
     # Wheel-odom TF stays OFF: OKVIS is the only odometry. Driver still publishes the
@@ -240,11 +281,22 @@ def generate_launch_description():
             launch_arguments={
                 'camera_namespace': '',
                 'camera_name': 'camera',
-                'enable_color': 'false',
-                'enable_depth': 'false',
+                # color + depth + aligned-depth only for reloc:=aruco (ArUco detection).
+                'enable_color': aruco_stream,
+                'enable_depth': aruco_stream,
+                'align_depth.enable': aruco_stream,
+                # Keep color low-res to relieve USB/CPU load so OKVIS doesn't drop
+                # frames / lag (default color is 1280x720x30). 640x480x15 still
+                # detects a 150 mm marker at close relocalization range.
+                'rgb_camera.color_profile': '640,480,15',
                 'enable_infra1': 'true',
                 'enable_infra2': 'true',
                 'depth_module.infra_profile': '640,480,15',
+                # Depth shares the one D435i stereo module with infra1/2, so its
+                # profile MUST match the infra profile (res + fps) or the driver
+                # brings up IR and silently drops depth. Without depth, the ArUco
+                # detector's color+depth TimeSynchronizer never fires.
+                'depth_module.depth_profile': '640,480,15',
                 'depth_module.infra1_format': 'Y8',
                 'depth_module.infra2_format': 'Y8',
                 'enable_gyro': 'true',
@@ -254,13 +306,6 @@ def generate_launch_description():
                 'config_file': realsense_params_file,
             }.items()),
     ])
-
-    def static_tf(name, parent, child):
-        return Node(
-            package='tf2_ros', executable='static_transform_publisher', name=name,
-            arguments=['--x', '0', '--y', '0', '--z', '0',
-                       '--roll', '0', '--pitch', '0', '--yaw', '0',
-                       '--frame-id', parent, '--child-frame-id', child])
 
     # Anchor odom == base_link(t=0) on the floor (see map_anchor.py). This makes
     # odom->world->base_link a proper odometry chain rooted at the session start pose.
@@ -274,9 +319,8 @@ def generate_launch_description():
         output='screen',
         parameters=[{'input_topic': '/camera/imu', 'output_topic': '/okvis/imu0'}])
 
-    # OKVIS sensor frame S == IMU frame == camera_gyro_optical_frame.
-    okvis_sensor_frame = static_tf(
-        'okvis_sensor_frame', 'camera_gyro_optical_frame', 'camera_okvis_sensor_frame')
+    # OKVIS's sensor frame S == IMU frame == camera_gyro_optical_frame; OKVIS looks
+    # that frame up directly from the URDF TF tree (no alias frame needed).
 
     # ---------------- relocalization: the map -> odom edge ----------------
     # reloc:=amcl -> map_server serves the saved grid; AMCL publishes map->odom by
@@ -285,7 +329,7 @@ def generate_launch_description():
     # in the Stretch URDF). Seed the initial pose with RViz "2D Pose Estimate".
     map_server = Node(
         package='nav2_map_server', executable='map_server', name='map_server',
-        output='screen', condition=use_amcl,
+        output='screen', condition=use_map_server,
         parameters=[{'use_sim_time': use_sim_time, 'yaml_filename': map_yaml}])
 
     amcl = Node(
@@ -319,6 +363,40 @@ def generate_launch_description():
                    '--roll', '0', '--pitch', '0', '--yaw', '0',
                    '--frame-id', 'map', '--child-frame-id', 'odom'])
 
+    # reloc:=aruco -> a fixed ArUco marker anchors map->odom. map_server (above, under
+    # use_map_server) serves the grid; this lifecycle activates it WITHOUT AMCL, and
+    # aruco_relocalizer owns map->odom from the recorded anchor. The anchor sidecar is
+    # <map>_anchor.yaml (same basename as the loaded map). detect_aruco_markers needs
+    # the color + aligned-depth streams enabled above (aruco_stream).
+    aruco_localization_lifecycle = Node(
+        package='nav2_lifecycle_manager', executable='lifecycle_manager',
+        name='lifecycle_manager_localization', output='screen', condition=use_aruco,
+        parameters=[{'use_sim_time': use_sim_time, 'autostart': autostart,
+                     'node_names': ['map_server']}])
+
+    aruco_detect = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource([stretch_core_path, '/launch/stretch_aruco.launch.py']),
+        launch_arguments={'aruco_dict': 'DICT_5X5_1000'}.items(),
+        condition=use_aruco)
+
+    anchor_yaml_path = PythonExpression(
+        ["'", map_yaml, "'.replace('.yaml', '_anchor.yaml')"])
+    aruco_relocalizer = Node(
+        package='stretch_aruco_localizer', executable='aruco_relocalizer',
+        name='aruco_relocalizer', output='screen', condition=use_aruco,
+        parameters=[{'use_sim_time': use_sim_time,
+                     'anchor_yaml_path': anchor_yaml_path,
+                     'marker_name': marker_name,
+                     'mode': aruco_mode}])
+
+    # One-shot manipulation posture at startup. Driver is already in navigation mode,
+    # which accepts arm/lift/wrist/head trajectory goals, so no mode switch is needed.
+    startup_posture = Node(
+        package='stretch_aruco_localizer', executable='go_to_posture',
+        name='go_to_posture', output='screen',
+        condition=IfCondition(LaunchConfiguration('startup_posture')),
+        parameters=[{'include_head': LaunchConfiguration('include_head')}])
+
     # ---------------- nav2 planning/control ----------------
     # Reuse Stretch's navigation launcher rather than nav2_bringup's upstream launcher.
     # The Stretch launcher is the path used by navigation.launch.py and is known to:
@@ -345,6 +423,10 @@ def generate_launch_description():
         autostart_param,
         map_path_param,
         reloc_param,
+        marker_name_param,
+        aruco_mode_param,
+        startup_posture_param,
+        include_head_param,
         # OKVIS odometry stack
         stretch_driver_launch,
         rplidar_launch,
@@ -353,13 +435,16 @@ def generate_launch_description():
         okvis_launch,
         map_anchor,
         imu_qos_bridge,
-        okvis_sensor_frame,
         # relocalization (map -> odom)
         map_server,
         amcl,
         localization_lifecycle,
         amcl_freeze,
         map_to_odom_identity,
+        aruco_localization_lifecycle,
+        aruco_detect,
+        aruco_relocalizer,
+        startup_posture,
         # navigation
         navigation_launch,
         rviz_launch,

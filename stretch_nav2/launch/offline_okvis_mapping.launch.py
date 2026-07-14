@@ -3,7 +3,7 @@ import os
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, GroupAction, IncludeLaunchDescription
 from launch.conditions import IfCondition
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_xml.launch_description_sources import XMLLaunchDescriptionSource
 from launch_ros.actions import Node, SetRemap
@@ -23,8 +23,7 @@ from ament_index_python.packages import get_package_share_directory, get_package
 
 def generate_launch_description():
     stretch_core_path = get_package_share_directory('stretch_core')
-    nav2_bringup_package = str(get_package_share_path("nav2_bringup"))
-    
+
     stretch_okvis_share = get_package_share_directory('stretch_okvis')
     okvis_package = str(get_package_share_path("okvis"))
 
@@ -38,6 +37,44 @@ def generate_launch_description():
         default_value='false',
         description='Use simulation/Gazebo clock')
 
+    # Optional Phase-1 ArUco anchor recording. When record_anchor:=true, additionally
+    # run the ArUco detector (needs color + aligned depth, enabled below) and the
+    # aruco_anchor_recorder. Park facing the fixed marker and call the
+    # /record_anchor service before saving the map; it writes <map_name>_anchor.yaml
+    # that reloc:=aruco later consumes. Default false keeps plain OKVIS mapping intact.
+    record_anchor_param = DeclareLaunchArgument(
+        'record_anchor', default_value='false', choices=['true', 'false'],
+        description='Also run the ArUco anchor recorder during mapping')
+    marker_name_param = DeclareLaunchArgument(
+        'marker_name', default_value='map_anchor',
+        description="ArUco marker NAME (from stretch_marker_dict.yaml) to anchor on "
+                    "(default 'map_anchor', the 5x5 id-777 entry)")
+    map_name_param = DeclareLaunchArgument(
+        'map_name', default_value=os.environ.get('MAP_NAME', 'map'),
+        description='Basename for the anchor sidecar (<map_name>_anchor.yaml)')
+
+    # Move to the manipulation posture on startup (one-shot). The driver runs in
+    # gamepad mode here, which does NOT accept joint trajectory goals, so the posture
+    # node briefly switches to position mode and back to gamepad (the base is not
+    # touched). NOTE include_head:=true turns the head camera to the arm, which
+    # disables OKVIS VIO while turned (so mapping cannot track meanwhile).
+    startup_posture_param = DeclareLaunchArgument(
+        'startup_posture', default_value='true', choices=['true', 'false'],
+        description='Move to the manipulation posture at startup')
+    include_head_param = DeclareLaunchArgument(
+        'include_head', default_value='true', choices=['true', 'false'],
+        description='Include head pan/tilt in the startup posture (points camera at '
+                    'the arm; breaks OKVIS while turned)')
+
+    record_anchor = LaunchConfiguration('record_anchor')
+    marker_name = LaunchConfiguration('marker_name')
+    map_name = LaunchConfiguration('map_name')
+    use_anchor = IfCondition(PythonExpression(["'", record_anchor, "' == 'true'"]))
+    # Color + aligned depth are needed only when recording an anchor (the detector
+    # consumes them); off otherwise so OKVIS keeps the IR/IMU bandwidth to itself.
+    anchor_stream = PythonExpression(
+        ["'true' if '", record_anchor, "' == 'true' else 'false'"])
+
     # Wheel-odometry TF disabled: OKVIS is the only state estimator. The driver
     # still publishes the /odom topic and the URDF (robot_state_publisher).
     stretch_driver_launch = IncludeLaunchDescription(
@@ -47,8 +84,17 @@ def generate_launch_description():
     rplidar_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([stretch_core_path, '/launch/rplidar.launch.py']))
 
-    rviz_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource([nav2_bringup_package, '/launch/rviz_launch.py']),
+    # Launch RViz directly. nav2_bringup/rviz_launch.py deliberately shuts down the
+    # entire launch when RViz exits; here that would also kill OKVIS, octomap_server
+    # and the rest of the mapping stack just because the GUI was closed or its OpenGL
+    # process crashed. Use the operator's tuned RViz config from stretch_user rather
+    # than nav2_bringup's stock view.
+    rviz_config = os.path.join(
+        os.environ.get('HELLO_FLEET_PATH', '/home/hello-robot/stretch_user'),
+        'nav2_default_view.rviz')
+    rviz_launch = Node(
+        package='rviz2', executable='rviz2', name='rviz', output='screen',
+        arguments=['-d', rviz_config],
         condition=IfCondition(LaunchConfiguration('use_rviz')))
 
     # OKVIS via the subscriber node: unlike okvis_node_realsense, it does NOT open the
@@ -79,11 +125,22 @@ def generate_launch_description():
             launch_arguments={
                 'camera_namespace': '',
                 'camera_name': 'camera',
-                'enable_color': 'false',
-                'enable_depth': 'false',
+                # color + depth + aligned-depth only when recording an ArUco anchor.
+                'enable_color': anchor_stream,
+                'enable_depth': anchor_stream,
+                'align_depth.enable': anchor_stream,
+                # Keep color low-res to relieve USB/CPU load so OKVIS doesn't drop
+                # frames / lag (default color is 1280x720x30). 640x480x15 still
+                # detects a 150 mm marker at close relocalization range.
+                'rgb_camera.color_profile': '640,480,15',
                 'enable_infra1': 'true',
                 'enable_infra2': 'true',
                 'depth_module.infra_profile': '640,480,15',
+                # Depth shares the one D435i stereo module with infra1/2, so its
+                # profile MUST match the infra profile (res + fps) or the driver
+                # brings up IR and silently drops depth. Without depth, the ArUco
+                # detector's color+depth TimeSynchronizer never fires.
+                'depth_module.depth_profile': '640,480,15',
                 'depth_module.infra1_format': 'Y8',
                 'depth_module.infra2_format': 'Y8',
                 'enable_gyro': 'true',
@@ -116,11 +173,9 @@ def generate_launch_description():
         output='screen',
         parameters=[{'input_topic': '/camera/imu', 'output_topic': '/okvis/imu0'}])
 
-    # Tell OKVIS where its sensor frame sits on the robot: S == the IMU frame
-    # (per OKVIS Parameters.hpp), which on the D435i is camera_gyro_optical_frame.
-    # OKVIS reads camera_okvis_sensor_frame->base_link from TF to build world->base_link as the true base pose.
-    okvis_sensor_frame = static_tf(
-        'okvis_sensor_frame', 'camera_gyro_optical_frame', 'camera_okvis_sensor_frame')
+    # OKVIS's sensor frame S == IMU frame == camera_gyro_optical_frame (on the D435i);
+    # OKVIS reads camera_gyro_optical_frame->base_link directly from the URDF TF tree
+    # to build world->base_link as the true base pose (no alias frame needed).
 
     # --- 2D occupancy mapping with KNOWN POSES (OKVIS), no extra SLAM ---
     # octomap_server integrates the lidar using the sensor->map transform from TF
@@ -150,10 +205,45 @@ def generate_launch_description():
         }],
         remappings=[('cloud_in', '/lidar_cloud')])
 
+    # Phase-1 anchor recording (only when record_anchor:=true).
+    aruco_detect = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource([stretch_core_path, '/launch/stretch_aruco.launch.py']),
+        launch_arguments={'aruco_dict': 'DICT_5X5_1000'}.items(),
+        condition=use_anchor)
+    aruco_anchor_recorder = Node(
+        package='stretch_aruco_localizer', executable='aruco_anchor_recorder',
+        name='aruco_anchor_recorder', output='screen', condition=use_anchor,
+        parameters=[{'marker_name': marker_name, 'map_name': map_name}])
+
+    # Demo-goal recording is always available during mapping (needs only the
+    # map->base_link TF, no camera): drive to a pose, call /record_goal, and it
+    # appends to <map_name>_goals.yaml. goal_sender replays these in a mission.
+    goal_recorder = Node(
+        package='stretch_aruco_localizer', executable='goal_recorder',
+        name='goal_recorder', output='screen',
+        parameters=[{'map_name': map_name}])
+
+    # One-shot manipulation posture at startup. Driver is in gamepad mode, which
+    # rejects joint trajectory goals, so switch to position to command, then restore
+    # gamepad for teleop driving (base is untouched by the posture).
+    startup_posture = Node(
+        package='stretch_aruco_localizer', executable='go_to_posture',
+        name='go_to_posture', output='screen',
+        condition=IfCondition(PythonExpression(
+            ["'", LaunchConfiguration('startup_posture'), "' == 'true'"])),
+        parameters=[{'include_head': LaunchConfiguration('include_head'),
+                     'move_mode': 'position',
+                     'restore_mode': 'gamepad'}])
+
     ld = LaunchDescription([
         rviz_param,
         teleop_type,
         declare_use_sim_time_argument,
+        record_anchor_param,
+        marker_name_param,
+        map_name_param,
+        startup_posture_param,
+        include_head_param,
         stretch_driver_launch,
         rplidar_launch,
         rviz_launch,
@@ -162,9 +252,12 @@ def generate_launch_description():
         map_to_odom,
         map_anchor,
         imu_qos_bridge,
-        okvis_sensor_frame,
         scan_to_cloud,
         octomap_server,
+        aruco_detect,
+        aruco_anchor_recorder,
+        goal_recorder,
+        startup_posture,
     ])
 
     return ld

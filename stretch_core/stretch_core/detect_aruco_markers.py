@@ -532,11 +532,11 @@ class ArucoMarker:
         
      
 class ArucoMarkerCollection:
-    def __init__(self, marker_info, show_debug_images=False):
+    def __init__(self, marker_info, show_debug_images=False, aruco_dict_id=aruco.DICT_6X6_250):
         self.show_debug_images = show_debug_images
-        
+
         self.marker_info = marker_info
-        self.aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_6X6_250)
+        self.aruco_dict = aruco.getPredefinedDictionary(aruco_dict_id)
         self.aruco_detection_parameters =  aruco.DetectorParameters()
         # Apparently available in OpenCV 3.4.1, but not OpenCV 3.2.0.
         self.aruco_detection_parameters.cornerRefinementMethod = aruco.CORNER_REFINE_SUBPIX
@@ -640,7 +640,22 @@ class DetectArucoNode(Node):
                 self.marker_info[key.split('.')[0]] = {}
                 self.marker_info[key.split('.')[0]][key.split('.')[1]] = self.get_parameter_or('aruco_marker_info.{}'.format(key)).value
 
-        self.aruco_marker_collection = ArucoMarkerCollection(self.marker_info, self.show_debug_images)
+        # ArUco predefined dictionary, e.g. 'DICT_6X6_250' (default, Stretch body
+        # markers) or 'DICT_5X5_1000'. Resolved to the cv2.aruco.<name> constant.
+        aruco_dict_name = self.get_parameter_or(
+            'aruco_dict',
+            rclpy.parameter.Parameter('aruco_dict', value='DICT_6X6_250')).value
+        try:
+            aruco_dict_id = getattr(aruco, aruco_dict_name)
+        except AttributeError:
+            self.get_logger().error(
+                "unknown aruco_dict '{0}', falling back to DICT_6X6_250".format(
+                    aruco_dict_name))
+            aruco_dict_id = aruco.DICT_6X6_250
+        self.get_logger().info('using ArUco dictionary {0}'.format(aruco_dict_name))
+
+        self.aruco_marker_collection = ArucoMarkerCollection(
+            self.marker_info, self.show_debug_images, aruco_dict_id)
 
         self.rgb_topic_name = '/camera/color/image_raw' #'/camera/infra1/image_rect_raw'
         self.rgb_image_subscriber = message_filters.Subscriber(self, Image, self.rgb_topic_name)

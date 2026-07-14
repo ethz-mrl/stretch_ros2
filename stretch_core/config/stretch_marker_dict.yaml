@@ -73,6 +73,15 @@
         use_rgb_only: False
         name: 'user_pointer'
         link: 'None'
+      # Fixed environment marker for ArUco-anchored relocalization (reloc:=aruco).
+      # This is a 5x5 marker, so the detector must run with aruco_dict:=DICT_5X5_1000
+      # (see stretch_aruco.launch.py); the navigation_okvis / offline_okvis_mapping
+      # launches set that automatically for the aruco paths.
+      '0':
+        length_mm: 150
+        use_rgb_only: False
+        name: 'map_anchor'
+        link: None
       'default':
         length_mm: 24
         use_rgb_only: False
