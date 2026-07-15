@@ -57,7 +57,7 @@ def generate_launch_description():
     rviz_param = DeclareLaunchArgument('use_rviz', default_value='true', choices=['true', 'false'])
 
     teleop_type = DeclareLaunchArgument(
-        'teleop_type', default_value="none", description="how to teleop ('keyboard', 'joystick' or 'none')")
+        'teleop_type', default_value="joystick", description="how to teleop ('keyboard', 'joystick' or 'none')")
 
     declare_use_sim_time_argument = DeclareLaunchArgument(
         'use_sim_time', default_value='false', description='Use simulation/Gazebo clock')
@@ -74,14 +74,17 @@ def generate_launch_description():
         description='Full path to the map.yaml file to localize/navigate in')
 
     reloc_param = DeclareLaunchArgument(
-        'reloc', default_value='amcl',
-        choices=['amcl', 'amcl_oneshot', 'none', 'hloc', 'aruco'],
+        'reloc', default_value='aruco',
+        choices=['amcl', 'amcl_oneshot', 'none', 'hloc', 'aruco', 'aruco_amcl'],
         description="How map->odom (relocalization) is provided: 'amcl' (lidar vs "
                     "saved grid, continuous), 'amcl_oneshot' (AMCL corrects the initial "
                     "2D Pose Estimate ONCE, then freezes map->odom so OKVIS carries a "
                     "smooth pose with no further jumps), 'none' (identity static; "
-                    "map == start pose) or 'aruco' (a fixed ArUco marker anchors "
-                    "map->odom; requires a recorded <map>_anchor.yaml sidecar)")
+                    "map == start pose), 'aruco' (a fixed ArUco marker anchors "
+                    "map->odom; requires a recorded <map>_anchor.yaml sidecar), or "
+                    "'aruco_amcl' (AMCL owns map->odom as in 'amcl', but a confident "
+                    "board sighting periodically re-seeds AMCL's belief via "
+                    "/initialpose -- joint lidar + board relocalization)")
 
     # For reloc:=aruco. marker_name defaults empty -> the relocalizer uses the name
     # stored in the anchor sidecar. aruco_mode picks single_shot vs periodic.
@@ -132,7 +135,7 @@ def generate_launch_description():
         description='goal_navigator: safety cutoff for the yaw trim rotation.')
 
     wall_square_enable_param = DeclareLaunchArgument(
-        'wall_square_enable', default_value='true', choices=['true', 'false'],
+        'wall_square_enable', default_value='false', choices=['true', 'false'],
         description="goal_navigator: after the yaw trim, check the RPLidar "
                     "for a flat surface directly behind the robot and, if "
                     "found, do one more small rotation to square base_link's "
@@ -184,21 +187,30 @@ def generate_launch_description():
         source_params, wait_only_bt, wait_only_bt_through,
         use_rpp_controller=True, max_linear_vel=0.05, max_angular_vel=0.05)
 
-    # map_server + AMCL run for BOTH amcl and amcl_oneshot (same lidar-vs-grid setup);
-    # oneshot additionally runs amcl_freeze, which deactivates AMCL after it converges.
+    # map_server + AMCL run for amcl, amcl_oneshot AND aruco_amcl (all lidar-vs-grid
+    # localization via AMCL); oneshot additionally runs amcl_freeze, which deactivates
+    # AMCL after it converges. aruco_amcl additionally runs the ChArUco detector +
+    # aruco_amcl_bridge below, which nudges AMCL's belief via /initialpose.
     use_amcl = IfCondition(
-        PythonExpression(["'", reloc, "' in ('amcl', 'amcl_oneshot')"]))
+        PythonExpression(["'", reloc, "' in ('amcl', 'amcl_oneshot', 'aruco_amcl')"]))
     use_oneshot = IfCondition(PythonExpression(["'", reloc, "' == 'amcl_oneshot'"]))
     no_reloc = IfCondition(PythonExpression(["'", reloc, "' == 'none'"]))
     use_aruco = IfCondition(PythonExpression(["'", reloc, "' == 'aruco'"]))
+    use_aruco_amcl = IfCondition(PythonExpression(["'", reloc, "' == 'aruco_amcl'"]))
+    # ChArUco board detector is needed by BOTH 'aruco' (owns map->odom outright) and
+    # 'aruco_amcl' (only nudges AMCL's belief).
+    use_charuco = IfCondition(
+        PythonExpression(["'", reloc, "' in ('aruco', 'aruco_amcl')"]))
     # map_server serves the saved grid for the costmap static layer under amcl,
-    # amcl_oneshot AND aruco (all navigate in the saved map). aruco just doesn't run AMCL.
+    # amcl_oneshot, aruco AND aruco_amcl (all navigate in the saved map). aruco just
+    # doesn't run AMCL.
     use_map_server = IfCondition(
-        PythonExpression(["'", reloc, "' in ('amcl', 'amcl_oneshot', 'aruco')"]))
-    # RealSense color + aligned depth are needed ONLY for aruco (detect_aruco_markers
-    # consumes /camera/color + /camera/aligned_depth_to_color). Off otherwise so OKVIS
-    # keeps the IR/IMU bandwidth to itself.
-    aruco_stream = PythonExpression(["'true' if '", reloc, "' == 'aruco' else 'false'"])
+        PythonExpression(["'", reloc, "' in ('amcl', 'amcl_oneshot', 'aruco', 'aruco_amcl')"]))
+    # RealSense color + aligned depth are needed for aruco AND aruco_amcl
+    # (detect_aruco_markers consumes /camera/color + /camera/aligned_depth_to_color).
+    # Off otherwise so OKVIS keeps the IR/IMU bandwidth to itself.
+    aruco_stream = PythonExpression(
+        ["'true' if '", reloc, "' in ('aruco', 'aruco_amcl') else 'false'"])
 
     # ---------------- OKVIS state-estimation stack (from offline_okvis_mapping) ----
     # Wheel-odom TF stays OFF: OKVIS is the only odometry. Driver still publishes the
@@ -373,11 +385,11 @@ def generate_launch_description():
 
     # ChArUco board detector (replaces the single-marker stretch_core detector).
     # Publishes the board pose as TF camera_color_optical_frame -> <marker_name>,
-    # which aruco_relocalizer consumes exactly as before. Board is 6 columns x 4 rows,
-    # 66 mm squares, 49 mm markers, DICT_4X4.
+    # which aruco_relocalizer (or aruco_amcl_bridge) consumes exactly as before. Board
+    # is 6 columns x 4 rows, 66 mm squares, 49 mm markers, DICT_4X4.
     aruco_detect = Node(
         package='stretch_aruco_localizer', executable='charuco_detector',
-        name='charuco_detector', output='screen', condition=use_aruco,
+        name='charuco_detector', output='screen', condition=use_charuco,
         parameters=[{
             'squares_x': 6, 'squares_y': 4,
             'square_length_m': 0.066, 'marker_length_m': 0.049,
@@ -395,6 +407,16 @@ def generate_launch_description():
                      'anchor_yaml_path': anchor_yaml_path,
                      'marker_name': marker_name,
                      'mode': aruco_mode}])
+
+    # reloc:=aruco_amcl -> AMCL (above, under use_amcl) owns map->odom continuously
+    # from lidar-vs-grid matching; this node only nudges AMCL's belief via
+    # /initialpose on confident board sightings (see aruco_amcl_bridge.py).
+    aruco_amcl_bridge = Node(
+        package='stretch_aruco_localizer', executable='aruco_amcl_bridge',
+        name='aruco_amcl_bridge', output='screen', condition=use_aruco_amcl,
+        parameters=[{'use_sim_time': use_sim_time,
+                     'anchor_yaml_path': anchor_yaml_path,
+                     'marker_name': marker_name}])
 
     # One-shot manipulation posture at startup. Driver is already in navigation mode,
     # which accepts arm/lift/wrist/head trajectory goals, so no mode switch is needed.
@@ -515,6 +537,7 @@ def generate_launch_description():
         aruco_localization_lifecycle,
         aruco_detect,
         aruco_relocalizer,
+        aruco_amcl_bridge,
         startup_posture,
         # navigation
         navigation_launch,
