@@ -182,7 +182,7 @@ def generate_launch_description():
     # map to size/position the static costmap layer against.
     okvis_nav_params = write_okvis_nav_params(
         source_params, wait_only_bt, wait_only_bt_through,
-        use_rpp_controller=True, max_linear_vel=0.1, max_angular_vel=0.05)
+        use_rpp_controller=True, max_linear_vel=0.05, max_angular_vel=0.05)
 
     # map_server + AMCL run for BOTH amcl and amcl_oneshot (same lidar-vs-grid setup);
     # oneshot additionally runs amcl_freeze, which deactivates AMCL after it converges.
@@ -373,14 +373,14 @@ def generate_launch_description():
 
     # ChArUco board detector (replaces the single-marker stretch_core detector).
     # Publishes the board pose as TF camera_color_optical_frame -> <marker_name>,
-    # which aruco_relocalizer consumes exactly as before. Board matches the calib.io
-    # 4x3 / 48 mm / 36 mm / DICT_4X4 print (calib.io names it "3x4").
+    # which aruco_relocalizer consumes exactly as before. Board is 6 columns x 4 rows,
+    # 66 mm squares, 49 mm markers, DICT_4X4.
     aruco_detect = Node(
         package='stretch_aruco_localizer', executable='charuco_detector',
         name='charuco_detector', output='screen', condition=use_aruco,
         parameters=[{
-            'squares_x': 4, 'squares_y': 3,
-            'square_length_m': 0.048, 'marker_length_m': 0.036,
+            'squares_x': 6, 'squares_y': 4,
+            'square_length_m': 0.066, 'marker_length_m': 0.049,
             'aruco_dict': 'DICT_4X4_50', 'legacy_pattern': True,
             'min_charuco_corners': 4,
             'marker_name': marker_name,

@@ -45,7 +45,7 @@ def write_okvis_nav_params(source_params, bt_nav_to_pose, bt_nav_through_poses,
 
     cs = cfg['controller_server']['ros__parameters']
     # Arrival tolerance (general_goal_checker) = when Nav2 declares the goal reached.
-    cs['general_goal_checker']['xy_goal_tolerance'] = 0.03
+    cs['general_goal_checker']['xy_goal_tolerance'] = 0.05
     cs['general_goal_checker']['yaw_goal_tolerance'] = math.radians(5)
 
     if use_rpp_controller:

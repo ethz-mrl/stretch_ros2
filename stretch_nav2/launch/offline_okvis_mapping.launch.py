@@ -213,14 +213,14 @@ def generate_launch_description():
     # Phase-1 anchor recording (only when record_anchor:=true).
     # ChArUco board detector (replaces the single-marker stretch_core detector).
     # Publishes the board pose as TF camera_color_optical_frame -> <marker_name>,
-    # which aruco_anchor_recorder consumes exactly as before. Board matches the
-    # calib.io 4x3 / 48 mm / 36 mm / DICT_4X4 print (calib.io names it "3x4").
+    # which aruco_anchor_recorder consumes exactly as before. Board is 6 columns x
+    # 4 rows, 66 mm squares, 49 mm markers, DICT_4X4.
     aruco_detect = Node(
         package='stretch_aruco_localizer', executable='charuco_detector',
         name='charuco_detector', output='screen', condition=use_anchor,
         parameters=[{
-            'squares_x': 4, 'squares_y': 3,
-            'square_length_m': 0.048, 'marker_length_m': 0.036,
+            'squares_x': 6, 'squares_y': 4,
+            'square_length_m': 0.066, 'marker_length_m': 0.049,
             'aruco_dict': 'DICT_4X4_50', 'legacy_pattern': True,
             'min_charuco_corners': 4,
             'marker_name': marker_name,
