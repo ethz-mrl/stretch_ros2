@@ -85,6 +85,21 @@ def generate_launch_description():
         'yaw_correct_timeout_sec', default_value='6.0',
         description='goal_navigator: safety cutoff for the yaw trim rotation.')
 
+    wall_square_enable_param = DeclareLaunchArgument(
+        'wall_square_enable', default_value='false', choices=['true', 'false'],
+        description="goal_navigator: after the yaw trim, check the RPLidar "
+                    "for a flat surface directly behind the robot and, if "
+                    "found, do one more small rotation to square base_link's "
+                    "x-axis to it (a real wall is a steadier heading "
+                    "reference than VIO/the recorded goal orientation). A "
+                    "no-op if nothing suitable is in range.")
+    wall_square_max_range_m_param = DeclareLaunchArgument(
+        'wall_square_max_range_m', default_value='1.2',
+        description='goal_navigator: ignore lidar returns behind the robot farther than this.')
+    wall_square_tolerance_deg_param = DeclareLaunchArgument(
+        'wall_square_tolerance_deg', default_value='0.0',
+        description='goal_navigator: wall-square trim stops once within this many degrees.')
+
     # Move to the manipulation posture on startup (one-shot). NOTE include_head:=true
     # turns the head camera to the arm, which disables OKVIS VIO while turned.
     startup_posture_param = DeclareLaunchArgument(
@@ -263,7 +278,10 @@ def generate_launch_description():
                      'yaw_correct_enable': LaunchConfiguration('yaw_correct_enable'),
                      'yaw_correct_tolerance_deg': LaunchConfiguration('yaw_correct_tolerance_deg'),
                      'yaw_correct_vel': LaunchConfiguration('yaw_correct_vel'),
-                     'yaw_correct_timeout_sec': LaunchConfiguration('yaw_correct_timeout_sec')}])
+                     'yaw_correct_timeout_sec': LaunchConfiguration('yaw_correct_timeout_sec'),
+                     'wall_square_enable': LaunchConfiguration('wall_square_enable'),
+                     'wall_square_max_range_m': LaunchConfiguration('wall_square_max_range_m'),
+                     'wall_square_tolerance_deg': LaunchConfiguration('wall_square_tolerance_deg')}])
 
     # Goals recorded this session are keyed off map==odom==world==THIS session's
     # start pose (no relocalization ties them to anything more durable) -- they are
@@ -292,6 +310,9 @@ def generate_launch_description():
         yaw_correct_tolerance_deg_param,
         yaw_correct_vel_param,
         yaw_correct_timeout_sec_param,
+        wall_square_enable_param,
+        wall_square_max_range_m_param,
+        wall_square_tolerance_deg_param,
         startup_posture_param,
         include_head_param,
         # OKVIS odometry stack

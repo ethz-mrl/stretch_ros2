@@ -96,6 +96,56 @@ def generate_launch_description():
         description="reloc:=aruco: 'single_shot' (fix once, freeze) or 'periodic' "
                     "(re-anchor on every fresh sighting to bound VIO drift)")
 
+    # goal_recorder / goal_navigator: same record-once / replay-on-demand pair as
+    # navigation_okvis_explore.launch.py, here keyed off the real, persistent map
+    # (not a session-only one) so recorded goals remain valid across restarts.
+    map_name_param = DeclareLaunchArgument(
+        'map_name', default_value=os.environ.get('MAP_NAME', 'map_test'),
+        description="Basename for the <map_name>_goals.yaml sidecar recorded via "
+                    "/record_goal (goal_recorder) and replayed via goal_navigator's "
+                    "/goto/<name> services. Defaults to the same MAP_NAME as the "
+                    "loaded map, so goals live alongside it.")
+
+    settle_sec_param = DeclareLaunchArgument(
+        'settle_sec', default_value='1.0',
+        description="goal_navigator: seconds to wait after NavigateToPose returns "
+                    "before measuring/reporting pos_err/yaw_err against the recorded "
+                    "goal. Nav2's own goal-reached check happens instantly at "
+                    "whatever pose it has right then; set this near 0 to see that "
+                    "same instant instead of pose drift/settle after the fact.")
+
+    yaw_correct_enable_param = DeclareLaunchArgument(
+        'yaw_correct_enable', default_value='true', choices=['true', 'false'],
+        description="goal_navigator: after Nav2 reports SUCCEEDED, rotate in "
+                    "place (bounded, closed-loop off the same map->base_link "
+                    "TF) to trim any residual yaw error before measuring/"
+                    "reporting it. Set false to see Nav2's raw arrival heading "
+                    "uncorrected.")
+    yaw_correct_tolerance_deg_param = DeclareLaunchArgument(
+        'yaw_correct_tolerance_deg', default_value='3.0',
+        description='goal_navigator: yaw trim stops once within this many degrees.')
+    yaw_correct_vel_param = DeclareLaunchArgument(
+        'yaw_correct_vel', default_value='0.15',
+        description='goal_navigator: fixed |angular.z| (rad/s) used while trimming yaw.')
+    yaw_correct_timeout_sec_param = DeclareLaunchArgument(
+        'yaw_correct_timeout_sec', default_value='6.0',
+        description='goal_navigator: safety cutoff for the yaw trim rotation.')
+
+    wall_square_enable_param = DeclareLaunchArgument(
+        'wall_square_enable', default_value='true', choices=['true', 'false'],
+        description="goal_navigator: after the yaw trim, check the RPLidar "
+                    "for a flat surface directly behind the robot and, if "
+                    "found, do one more small rotation to square base_link's "
+                    "x-axis to it (a real wall is a steadier heading "
+                    "reference than VIO/the recorded goal orientation). A "
+                    "no-op if nothing suitable is in range.")
+    wall_square_max_range_m_param = DeclareLaunchArgument(
+        'wall_square_max_range_m', default_value='1.2',
+        description='goal_navigator: ignore lidar returns behind the robot farther than this.')
+    wall_square_tolerance_deg_param = DeclareLaunchArgument(
+        'wall_square_tolerance_deg', default_value='0.0',
+        description='goal_navigator: wall-square trim stops once within this many degrees.')
+
     # Move to the manipulation posture on startup (one-shot). NOTE include_head:=true
     # turns the head camera to the arm, which disables OKVIS VIO + ArUco while turned.
     startup_posture_param = DeclareLaunchArgument(
@@ -112,6 +162,7 @@ def generate_launch_description():
     reloc = LaunchConfiguration('reloc')
     marker_name = LaunchConfiguration('marker_name')
     aruco_mode = LaunchConfiguration('aruco_mode')
+    map_name = LaunchConfiguration('map_name')
 
     # ALL OKVIS-navigation param overrides live here (see _write_okvis_nav_params):
     # goal tolerances, inflation, wait-only recovery + BT-xml, and voxel origin_z. The
@@ -121,8 +172,17 @@ def generate_launch_description():
                                 'navigate_to_pose_wait_only_recovery.xml')
     wait_only_bt_through = os.path.join(stretch_nav2_path, 'config',
                                         'navigate_through_poses_wait_only_recovery.xml')
+    # Same controller/velocity tuning as navigation_okvis_explore.launch.py --
+    # use_rpp_controller:=True (Regulated Pure Pursuit instead of DWB) tracks
+    # SmacPlannerHybrid's curved final approach arcs smoothly, with no discrete
+    # rotate-in-place switchover near the goal; max_linear_vel/max_angular_vel
+    # lowered from the 0.26 m/s / 0.4 rad/s stock caps to match the slower,
+    # settled arrivals validated in the explore workflow. rolling_global_costmap
+    # stays False here (unlike explore): this launch has a real map_server-served
+    # map to size/position the static costmap layer against.
     okvis_nav_params = write_okvis_nav_params(
-        source_params, wait_only_bt, wait_only_bt_through)
+        source_params, wait_only_bt, wait_only_bt_through,
+        use_rpp_controller=True, max_linear_vel=0.1, max_angular_vel=0.05)
 
     # map_server + AMCL run for BOTH amcl and amcl_oneshot (same lidar-vs-grid setup);
     # oneshot additionally runs amcl_freeze, which deactivates AMCL after it converges.
@@ -149,6 +209,14 @@ def generate_launch_description():
 
     rplidar_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([stretch_core_path, '/launch/rplidar.launch.py']))
+
+    # Joystick/keyboard teleop, same as navigation_okvis_explore.launch.py (default
+    # 'none' here, unlike explore's 'joystick' default, since this is the
+    # production/autonomous launch -- pass teleop_type:=joystick to drive manually
+    # mid-mission).
+    base_teleop_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource([stretch_nav2_path, '/launch/teleop_twist.launch.py']),
+        launch_arguments={'teleop_type': LaunchConfiguration('teleop_type')}.items())
 
     # Launch RViz directly. nav2_bringup/rviz_launch.py deliberately shuts down the
     # entire launch when RViz exits; here that would also kill map_server, AMCL,
@@ -384,6 +452,30 @@ def generate_launch_description():
                           'autostart': autostart,
                           'params_file': okvis_nav_params}.items())
 
+    # ---------------- goal recording + on-demand replay ----------------
+    # Same pair as navigation_okvis_explore.launch.py: /record_goal to save named
+    # poses, /goto/<name> to replay one (blocks until arrival, applies the yaw/
+    # wall-square trim below, reports pos_err/yaw_err). Unlike explore, goals here
+    # are kept across sessions (real map, not wiped on shutdown) since map->odom
+    # is tied to a persistent, reloadable map rather than this session's start pose.
+    goal_recorder = Node(
+        package='stretch_aruco_localizer', executable='goal_recorder',
+        name='goal_recorder', output='screen',
+        parameters=[{'map_name': map_name}])
+
+    goal_navigator = Node(
+        package='stretch_aruco_localizer', executable='goal_navigator',
+        name='goal_navigator', output='screen',
+        parameters=[{'map_name': map_name,
+                     'settle_sec': LaunchConfiguration('settle_sec'),
+                     'yaw_correct_enable': LaunchConfiguration('yaw_correct_enable'),
+                     'yaw_correct_tolerance_deg': LaunchConfiguration('yaw_correct_tolerance_deg'),
+                     'yaw_correct_vel': LaunchConfiguration('yaw_correct_vel'),
+                     'yaw_correct_timeout_sec': LaunchConfiguration('yaw_correct_timeout_sec'),
+                     'wall_square_enable': LaunchConfiguration('wall_square_enable'),
+                     'wall_square_max_range_m': LaunchConfiguration('wall_square_max_range_m'),
+                     'wall_square_tolerance_deg': LaunchConfiguration('wall_square_tolerance_deg')}])
+
     return LaunchDescription([
         rviz_param,
         teleop_type,
@@ -393,11 +485,21 @@ def generate_launch_description():
         reloc_param,
         marker_name_param,
         aruco_mode_param,
+        map_name_param,
+        settle_sec_param,
+        yaw_correct_enable_param,
+        yaw_correct_tolerance_deg_param,
+        yaw_correct_vel_param,
+        yaw_correct_timeout_sec_param,
+        wall_square_enable_param,
+        wall_square_max_range_m_param,
+        wall_square_tolerance_deg_param,
         startup_posture_param,
         include_head_param,
         # OKVIS odometry stack
         stretch_driver_launch,
         rplidar_launch,
+        base_teleop_launch,
         realsense_launch,
         okvis_nav_tf_bridge,
         okvis_after_posture,
@@ -417,4 +519,7 @@ def generate_launch_description():
         # navigation
         navigation_launch,
         rviz_launch,
+        # goal recording + replay
+        goal_recorder,
+        goal_navigator,
     ])
