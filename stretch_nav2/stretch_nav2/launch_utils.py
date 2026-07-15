@@ -79,7 +79,7 @@ def write_okvis_nav_params(source_params, bt_nav_to_pose, bt_nav_through_poses,
             # entirely: RPP always steers via continuous curvature (angular velocity
             # proportional to path curvature), which can't get stuck sustaining a
             # spin the way a discrete mode can.
-            'use_rotate_to_heading': False,
+            'use_rotate_to_heading': True,
             'max_angular_accel': 0.8,
             'max_robot_pose_search_dist': 10.0,
             'use_interpolation': True,
@@ -88,7 +88,7 @@ def write_okvis_nav_params(source_params, bt_nav_to_pose, bt_nav_through_poses,
             # (heavily reverse_penalty'd) reverse segments -- without this the
             # controller just can't follow those segments and the robot is stuck
             # going forward-only.
-            'allow_reversing': False,
+            'allow_reversing': True,
         }
     else:
         # DWB's RotateToGoal critic forces PURE ROTATION once within
