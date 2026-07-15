@@ -117,6 +117,57 @@ def generate_launch_description():
                     "whatever pose it has right then; set this near 0 to see that "
                     "same instant instead of pose drift/settle after the fact.")
 
+    staging_enable_param = DeclareLaunchArgument(
+        'staging_enable', default_value='true', choices=['true', 'false'],
+        description="goal_navigator: send Nav2 to a pose 'staging_offset_m' "
+                    "short of the goal (along the goal's own facing direction) "
+                    "instead of the goal itself, then let xy/yaw correction "
+                    "below close the remaining known-direction gap. Enable "
+                    "together with xy_correct_enable -- staging alone runs no "
+                    "local correction.")
+    staging_offset_m_param = DeclareLaunchArgument(
+        'staging_offset_m', default_value='0.30',
+        description='goal_navigator: distance short of the goal Nav2 is sent to '
+                    'when staging_enable is true.')
+
+    xy_correct_enable_param = DeclareLaunchArgument(
+        'xy_correct_enable', default_value='true', choices=['true', 'false'],
+        description="goal_navigator: after Nav2 reports SUCCEEDED (and before "
+                    "yaw correction), face the residual position vector and "
+                    "drive straight to trim it (bounded, closed-loop off the "
+                    "same map->base_link TF). MUST stay enabled while "
+                    "staging_enable is true, or every goto stops "
+                    "staging_offset_m short of the goal.")
+    xy_correct_tolerance_m_param = DeclareLaunchArgument(
+        'xy_correct_tolerance_m', default_value='0.03',
+        description='goal_navigator: xy trim stops once within this many meters.')
+    final_approach_mode_param = DeclareLaunchArgument(
+        'final_approach_mode', default_value='joint',
+        choices=['sequential', 'joint'],
+        description="goal_navigator: last-mile correction style. 'sequential' = "
+                    "drive to xy, then rotate to yaw (terminal in-place rotation "
+                    "can smear position via wheel slip). 'joint' = converge "
+                    "position and heading together, blending bearing into goal "
+                    "heading as distance shrinks -- ideal with staging_enable, "
+                    "since the leg starts on the goal's approach line.")
+    xy_correct_linear_vel_param = DeclareLaunchArgument(
+        'xy_correct_linear_vel', default_value='0.03',
+        description='goal_navigator: |linear.x| (m/s) for the final approach drive. '
+                    'Kept slow on purpose -- this is the precision leg.')
+    xy_correct_angular_vel_param = DeclareLaunchArgument(
+        'xy_correct_angular_vel', default_value='0.1',
+        description='goal_navigator: |angular.z| (rad/s) while aligning to the '
+                    'residual vector during the final approach.')
+    xy_correct_align_tolerance_deg_param = DeclareLaunchArgument(
+        'xy_correct_align_tolerance_deg', default_value='15.0',
+        description='goal_navigator: xy trim only drives once facing the residual '
+                    'within this many degrees; otherwise it turns in place first.')
+    xy_correct_timeout_sec_param = DeclareLaunchArgument(
+        'xy_correct_timeout_sec', default_value='30.0',
+        description='goal_navigator: safety cutoff for the xy trim maneuver. Keep it '
+                    'covering staging_offset_m / xy_correct_linear_vel plus a few '
+                    'seconds of alignment turning.')
+
     yaw_correct_enable_param = DeclareLaunchArgument(
         'yaw_correct_enable', default_value='true', choices=['true', 'false'],
         description="goal_navigator: after Nav2 reports SUCCEEDED, rotate in "
@@ -128,7 +179,7 @@ def generate_launch_description():
         'yaw_correct_tolerance_deg', default_value='3.0',
         description='goal_navigator: yaw trim stops once within this many degrees.')
     yaw_correct_vel_param = DeclareLaunchArgument(
-        'yaw_correct_vel', default_value='0.15',
+        'yaw_correct_vel', default_value='0.1',
         description='goal_navigator: fixed |angular.z| (rad/s) used while trimming yaw.')
     yaw_correct_timeout_sec_param = DeclareLaunchArgument(
         'yaw_correct_timeout_sec', default_value='6.0',
@@ -490,6 +541,16 @@ def generate_launch_description():
         name='goal_navigator', output='screen',
         parameters=[{'map_name': map_name,
                      'settle_sec': LaunchConfiguration('settle_sec'),
+                     'staging_enable': LaunchConfiguration('staging_enable'),
+                     'staging_offset_m': LaunchConfiguration('staging_offset_m'),
+                     'xy_correct_enable': LaunchConfiguration('xy_correct_enable'),
+                     'xy_correct_tolerance_m': LaunchConfiguration('xy_correct_tolerance_m'),
+                     'final_approach_mode': LaunchConfiguration('final_approach_mode'),
+                     'xy_correct_linear_vel': LaunchConfiguration('xy_correct_linear_vel'),
+                     'xy_correct_angular_vel': LaunchConfiguration('xy_correct_angular_vel'),
+                     'xy_correct_align_tolerance_deg': LaunchConfiguration(
+                         'xy_correct_align_tolerance_deg'),
+                     'xy_correct_timeout_sec': LaunchConfiguration('xy_correct_timeout_sec'),
                      'yaw_correct_enable': LaunchConfiguration('yaw_correct_enable'),
                      'yaw_correct_tolerance_deg': LaunchConfiguration('yaw_correct_tolerance_deg'),
                      'yaw_correct_vel': LaunchConfiguration('yaw_correct_vel'),
@@ -509,6 +570,15 @@ def generate_launch_description():
         aruco_mode_param,
         map_name_param,
         settle_sec_param,
+        staging_enable_param,
+        staging_offset_m_param,
+        xy_correct_enable_param,
+        xy_correct_tolerance_m_param,
+        final_approach_mode_param,
+        xy_correct_linear_vel_param,
+        xy_correct_angular_vel_param,
+        xy_correct_align_tolerance_deg_param,
+        xy_correct_timeout_sec_param,
         yaw_correct_enable_param,
         yaw_correct_tolerance_deg_param,
         yaw_correct_vel_param,
