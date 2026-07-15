@@ -1,7 +1,4 @@
 import os
-import tempfile
-
-import yaml
 
 from launch import LaunchDescription
 from launch.actions import (DeclareLaunchArgument, GroupAction, IncludeLaunchDescription,
@@ -14,82 +11,7 @@ from launch_xml.launch_description_sources import XMLLaunchDescriptionSource
 from launch_ros.actions import Node, SetRemap
 from ament_index_python.packages import get_package_share_directory, get_package_share_path
 
-
-def _write_okvis_nav_params(source_params, bt_nav_to_pose, bt_nav_through_poses):
-    """Produce the OKVIS-tuned nav2 params file WITHOUT touching the shared
-    nav2_params.yaml. Read the pristine params (used as-is by the wheel-odometry
-    navigation.launch.py) and apply every OKVIS-navigation-specific override here,
-    so all tuning lives in this launch file. Returns the path to a generated temp
-    file. RewrittenYaml can only rewrite pre-existing keys and struggles with list
-    values and adding the (Humble) BT-xml keys, so we edit the parsed YAML directly.
-    """
-    with open(source_params) as f:
-        cfg = yaml.safe_load(f)
-
-    cs = cfg['controller_server']['ros__parameters']
-    # Arrival tolerance (general_goal_checker) = when Nav2 declares the goal reached.
-    cs['general_goal_checker']['xy_goal_tolerance'] = 0.05
-    cs['general_goal_checker']['yaw_goal_tolerance'] = 0.10
-    # DWB's RotateToGoal critic forces PURE ROTATION once within
-    # FollowPath.xy_goal_tolerance of the goal. This MUST be <= the goal checker's
-    # xy tolerance; otherwise the robot flips to rotate-only while still too far in
-    # xy to ever satisfy completion, so it spins forever and never drives the last
-    # stretch (the "controller replans, base doesn't move" deadlock). Keep it equal
-    # so rotate-to-goal begins exactly at the arrival radius.
-    cs['FollowPath']['xy_goal_tolerance'] = cs['general_goal_checker']['xy_goal_tolerance']
-    # Must nearly stop before the final rotate-to-goal, so it settles precisely.
-    cs['FollowPath']['trans_stopped_velocity'] = 0.05
-
-    for scope in ('local_costmap', 'global_costmap'):
-        p = cfg[scope][scope]['ros__parameters']
-        # Inflation kept > the 0.22 m inscribed radius but well below the 0.55 default
-        # so DWB can use lab passages that are physically safe for Stretch.
-        p['inflation_layer']['inflation_radius'] = 0.3
-        # OKVIS's 6-DoF pose can put the floor lidar a few cm below odom z=0; start the
-        # voxel column below zero so the scan still raytraces and clears stale cells.
-        p['voxel_layer']['origin_z'] = -0.10
-
-    bs = cfg['behavior_server']['ros__parameters']
-    # Wait-only recovery: spin/backup are disruptive on Stretch. Drop them (and their
-    # now-unused plugin blocks) so only Wait remains.
-    for plug in ('spin', 'backup', 'drive_on_heading', 'assisted_teleop'):
-        bs.pop(plug, None)
-    bs['behavior_plugins'] = ['wait']
-    bs['wait'] = {'plugin': 'nav2_behaviors/Wait'}
-
-    bn = cfg['bt_navigator']['ros__parameters']
-    # Humble param names (`default_bt_xml_filename` is silently ignored). Point at the
-    # wait-only-recovery trees. BOTH must be set: bt_navigator loads the nav-to-pose AND
-    # nav-through-poses defaults at configure time, and the upstream trees invoke Spin/
-    # BackUp whose (disabled) servers would abort bt_navigator startup.
-    bn.pop('default_bt_xml_filename', None)
-    bn['default_nav_to_pose_bt_xml'] = bt_nav_to_pose
-    bn['default_nav_through_poses_bt_xml'] = bt_nav_through_poses
-
-    fd, path = tempfile.mkstemp(prefix='okvis_nav2_params_', suffix='.yaml')
-    with os.fdopen(fd, 'w') as f:
-        yaml.safe_dump(cfg, f, default_flow_style=False)
-    return path
-
-
-def _write_okvis_vio_config(source_cfg):
-    """OKVIS's config uses do_loop_closures:true (full VI-SLAM). Loop closures re-
-    optimize the pose graph and make world->base_link JUMP discretely -- fine for
-    building a map, but nav2/AMCL assume odom->base_link is SMOOTH, so a jumping
-    odometry makes the robot pose lurch, AMCL over-corrects, and the goal appears to
-    jump. For navigation we want pure VIO (smooth odometry; AMCL supplies the global
-    map correction). Flip that one flag via a text substitution -- the file is OpenCV
-    `%YAML:1.0`, not PyYAML-parseable -- and write a temp config. No okvis fork edit.
-    """
-    with open(source_cfg) as f:
-        text = f.read()
-    patched = text.replace('do_loop_closures: true', 'do_loop_closures: false')
-    if patched == text:
-        raise RuntimeError('did not find `do_loop_closures: true` in ' + source_cfg)
-    fd, path = tempfile.mkstemp(prefix='okvis_vio_', suffix='.yaml')
-    with os.fdopen(fd, 'w') as f:
-        f.write(patched)
-    return path
+from stretch_nav2.launch_utils import write_okvis_nav_params
 
 # OKVIS-based NAVIGATION in a pre-built 2D map.
 #
@@ -199,7 +121,7 @@ def generate_launch_description():
                                 'navigate_to_pose_wait_only_recovery.xml')
     wait_only_bt_through = os.path.join(stretch_nav2_path, 'config',
                                         'navigate_through_poses_wait_only_recovery.xml')
-    okvis_nav_params = _write_okvis_nav_params(
+    okvis_nav_params = write_okvis_nav_params(
         source_params, wait_only_bt, wait_only_bt_through)
 
     # map_server + AMCL run for BOTH amcl and amcl_oneshot (same lidar-vs-grid setup);
@@ -247,9 +169,9 @@ def generate_launch_description():
     # every message into addOdometryMeasurement(). Isolate that subscription here:
     # wheel odometry remains available to Nav2 for velocity feedback, but it cannot
     # alter the OKVIS pose estimate. This keeps stereo + IMU as OKVIS's only inputs.
-    # Run OKVIS with loop closures ENABLED (full VI-SLAM, do_loop_closures:true from the
+    # Run OKVIS with loop closures DISABLED (VIO only, do_loop_closures:false in the
     # stock config). Loop closures re-optimize the pose graph and can make odom->base_link
-    # jump discretely; AMCL/costmap must tolerate that.
+    # jump discretely, which is undesirable during navigation.
     # Built via a factory so a fresh action can be handed to whichever startup branch
     # runs below (the same launch action object must not be reused in two places). The
     # SetRemaps live inside the returned GroupAction, so its scoping is preserved even
