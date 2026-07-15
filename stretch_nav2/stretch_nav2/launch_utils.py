@@ -75,12 +75,15 @@ def write_okvis_nav_params(source_params, bt_nav_to_pose, bt_nav_through_poses,
             # (forced nonzero minimum_turning_radius even though Stretch can pivot
             # in place), so that bearing keeps swinging as the path curls, and RPP
             # keeps re-entering rotate mode instead of settling -- this IS the
-            # observed continuous spinning. Disabling it removes that discrete mode
-            # entirely: RPP always steers via continuous curvature (angular velocity
-            # proportional to path curvature), which can't get stuck sustaining a
-            # spin the way a discrete mode can.
+            # observed continuous spinning. Disabled: RPP always steers via
+            # continuous curvature (angular velocity proportional to path
+            # curvature) instead, which can't get stuck sustaining a spin the way
+            # the discrete mode can. It also avoids rotate-to-heading's default
+            # 1.8 rad/s command getting clamped to this launch's 0.05 rad/s
+            # velocity-smoother cap, which made the final in-place rotation behave
+            # unpredictably.
             'use_rotate_to_heading': True,
-            'max_angular_accel': 0.8,
+            'max_angular_accel': 0.4,
             'max_robot_pose_search_dist': 10.0,
             'use_interpolation': True,
             # RPP refuses to command reverse velocity at all unless this is set,
@@ -88,7 +91,7 @@ def write_okvis_nav_params(source_params, bt_nav_to_pose, bt_nav_through_poses,
             # (heavily reverse_penalty'd) reverse segments -- without this the
             # controller just can't follow those segments and the robot is stuck
             # going forward-only.
-            'allow_reversing': True,
+            'allow_reversing': False,
         }
     else:
         # DWB's RotateToGoal critic forces PURE ROTATION once within
@@ -111,8 +114,8 @@ def write_okvis_nav_params(source_params, bt_nav_to_pose, bt_nav_through_poses,
     vs = cfg['velocity_smoother']['ros__parameters']
     vs['max_velocity'] = [max_linear_vel, 0.0, max_angular_vel]
     vs['min_velocity'] = [-max_linear_vel, 0.0, -max_angular_vel]
-    vs['max_accel'] = [2.5, 0.0, 0.8]
-    vs['max_decel'] = [-2.5, 0.0, -0.8]
+    vs['max_accel'] = [2.5, 0.0, 0.4]
+    vs['max_decel'] = [-2.5, 0.0, -0.4]
 
     # Global planner: Smac Hybrid-A* instead of NavFn. NavFn paths carry no
     # orientation, so the goal yaw is only reachable by spinning in place at the

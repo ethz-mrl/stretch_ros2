@@ -68,6 +68,23 @@ def generate_launch_description():
                     "whatever pose it has right then; set this near 0 to see that "
                     "same instant instead of pose drift/settle after the fact.")
 
+    yaw_correct_enable_param = DeclareLaunchArgument(
+        'yaw_correct_enable', default_value='true', choices=['true', 'false'],
+        description="goal_navigator: after Nav2 reports SUCCEEDED, rotate in "
+                    "place (bounded, closed-loop off the same map->base_link "
+                    "TF) to trim any residual yaw error before measuring/"
+                    "reporting it. Set false to see Nav2's raw arrival heading "
+                    "uncorrected (e.g. for a pure OKVIS-drift measurement).")
+    yaw_correct_tolerance_deg_param = DeclareLaunchArgument(
+        'yaw_correct_tolerance_deg', default_value='3.0',
+        description='goal_navigator: yaw trim stops once within this many degrees.')
+    yaw_correct_vel_param = DeclareLaunchArgument(
+        'yaw_correct_vel', default_value='0.15',
+        description='goal_navigator: fixed |angular.z| (rad/s) used while trimming yaw.')
+    yaw_correct_timeout_sec_param = DeclareLaunchArgument(
+        'yaw_correct_timeout_sec', default_value='6.0',
+        description='goal_navigator: safety cutoff for the yaw trim rotation.')
+
     # Move to the manipulation posture on startup (one-shot). NOTE include_head:=true
     # turns the head camera to the arm, which disables OKVIS VIO while turned.
     startup_posture_param = DeclareLaunchArgument(
@@ -101,7 +118,7 @@ def generate_launch_description():
     okvis_nav_params = write_okvis_nav_params(
         source_params, wait_only_bt, wait_only_bt_through,
         rolling_global_costmap=True, use_rpp_controller=True,
-        max_linear_vel=0.05, max_angular_vel=0.2)
+        max_linear_vel=0.05, max_angular_vel=0.05)
 
     # Loop closures OFF: patch do_loop_closures:true -> false in a temp copy of the
     # stock OKVIS config (pure VIO; see module docstring).
@@ -242,7 +259,11 @@ def generate_launch_description():
         package='stretch_aruco_localizer', executable='goal_navigator',
         name='goal_navigator', output='screen',
         parameters=[{'map_name': map_name,
-                     'settle_sec': LaunchConfiguration('settle_sec')}])
+                     'settle_sec': LaunchConfiguration('settle_sec'),
+                     'yaw_correct_enable': LaunchConfiguration('yaw_correct_enable'),
+                     'yaw_correct_tolerance_deg': LaunchConfiguration('yaw_correct_tolerance_deg'),
+                     'yaw_correct_vel': LaunchConfiguration('yaw_correct_vel'),
+                     'yaw_correct_timeout_sec': LaunchConfiguration('yaw_correct_timeout_sec')}])
 
     # Goals recorded this session are keyed off map==odom==world==THIS session's
     # start pose (no relocalization ties them to anything more durable) -- they are
@@ -267,6 +288,10 @@ def generate_launch_description():
         autostart_param,
         map_name_param,
         settle_sec_param,
+        yaw_correct_enable_param,
+        yaw_correct_tolerance_deg_param,
+        yaw_correct_vel_param,
+        yaw_correct_timeout_sec_param,
         startup_posture_param,
         include_head_param,
         # OKVIS odometry stack
