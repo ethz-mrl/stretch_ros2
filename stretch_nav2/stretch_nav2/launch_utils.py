@@ -1,3 +1,4 @@
+import math
 import os
 import tempfile
 
@@ -5,7 +6,8 @@ import yaml
 
 
 def write_okvis_nav_params(source_params, bt_nav_to_pose, bt_nav_through_poses,
-                           rolling_global_costmap=False):
+                           rolling_global_costmap=False, use_rpp_controller=False,
+                           max_linear_vel=0.26, max_angular_vel=0.4):
     """Produce the OKVIS-tuned nav2 params file WITHOUT touching the shared
     nav2_params.yaml. Read the pristine params (used as-is by the wheel-odometry
     navigation.launch.py) and apply every OKVIS-navigation-specific override here,
@@ -21,6 +23,22 @@ def write_okvis_nav_params(source_params, bt_nav_to_pose, bt_nav_through_poses,
     drives negative in x or y -- Nav2 then aborts every goal instantly ("Robot is out
     of bounds of the costmap!"). Set this to drop static_layer (nothing would ever
     populate it anyway with no /map) and make the costmap follow the robot instead.
+
+    `use_rpp_controller`: replace DWB with
+    nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController for
+    FollowPath. DWB's RotateToGoal critic switches to pure in-place rotation the
+    moment the robot is within FollowPath.xy_goal_tolerance, which combined with
+    SmacPlannerHybrid's curved final approach arcs (needed to also match the goal
+    orientation) can look like the robot "spinning" near the goal. RPP instead
+    steers continuously off a lookahead point on the path -- no discrete rotate-only
+    mode -- which tracks those curved approaches far more smoothly.
+
+    `max_linear_vel`: caps top driving speed (m/s), applied to both the RPP
+    controller's desired_linear_vel and the velocity_smoother's linear limits.
+
+    `max_angular_vel`: caps top turning speed (rad/s), applied to the
+    velocity_smoother's angular limits (this is what actually clips the commanded
+    angular velocity downstream of whichever controller is in use).
     """
     with open(source_params) as f:
         cfg = yaml.safe_load(f)
@@ -28,27 +46,71 @@ def write_okvis_nav_params(source_params, bt_nav_to_pose, bt_nav_through_poses,
     cs = cfg['controller_server']['ros__parameters']
     # Arrival tolerance (general_goal_checker) = when Nav2 declares the goal reached.
     cs['general_goal_checker']['xy_goal_tolerance'] = 0.05
-    cs['general_goal_checker']['yaw_goal_tolerance'] = 0.1
-    # DWB's RotateToGoal critic forces PURE ROTATION once within
-    # FollowPath.xy_goal_tolerance of the goal. This MUST be <= the goal checker's
-    # xy tolerance; otherwise the robot flips to rotate-only while still too far in
-    # xy to ever satisfy completion, so it spins forever and never drives the last
-    # stretch (the "controller replans, base doesn't move" deadlock). Keep it equal
-    # so rotate-to-goal begins exactly at the arrival radius.
-    cs['FollowPath']['xy_goal_tolerance'] = cs['general_goal_checker']['xy_goal_tolerance']
-    # Must nearly stop before the final rotate-to-goal, so it settles precisely.
-    cs['FollowPath']['trans_stopped_velocity'] = 0.05
-    # Gentler rotation dynamics: the stock 1.0 rad/s @ 3.2 rad/s^2 overshoots the
-    # yaw window at 20 Hz and hunts back and forth. 0.4 rad/s @ 0.8 rad/s^2 stops
-    # within ~0.1 rad from full rate, so the final alignment settles first try.
-    cs['FollowPath']['max_vel_theta'] = 0.4
-    cs['FollowPath']['acc_lim_theta'] = 0.8
-    cs['FollowPath']['decel_lim_theta'] = -0.8
-    # Keep the velocity smoother's theta limits in lockstep with DWB's, or it
-    # re-clips/re-shapes the commands DWB already planned for.
+    cs['general_goal_checker']['yaw_goal_tolerance'] = math.radians(5)
+
+    if use_rpp_controller:
+        cs['controller_plugins'] = ['FollowPath']
+        cs['FollowPath'] = {
+            'plugin': 'nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController',
+            'desired_linear_vel': max_linear_vel,
+            'lookahead_dist': 0.4,
+            'min_lookahead_dist': 0.3,
+            'max_lookahead_dist': 0.9,
+            'lookahead_time': 1.5,
+            'transform_tolerance': 0.2,
+            'use_velocity_scaled_lookahead_dist': False,
+            'min_approach_linear_velocity': 0.03,
+            'approach_velocity_scaling_dist': 0.6,
+            'use_collision_detection': True,
+            'max_allowed_time_to_collision_up_to_carrot': 1.0,
+            'use_regulated_linear_velocity_scaling': True,
+            'use_cost_regulated_linear_velocity_scaling': False,
+            'regulated_linear_scaling_min_radius': 0.9,
+            'regulated_linear_scaling_min_speed': 0.25,
+            'use_fixed_curvature_lookahead': False,
+            'curvature_lookahead_dist': 0.25,
+            # use_rotate_to_heading puts RPP into a discrete "pure rotate in place"
+            # mode whenever the bearing to the lookahead point exceeds
+            # rotate_to_heading_min_angle. SmacPlannerHybrid's paths curve/loop
+            # (forced nonzero minimum_turning_radius even though Stretch can pivot
+            # in place), so that bearing keeps swinging as the path curls, and RPP
+            # keeps re-entering rotate mode instead of settling -- this IS the
+            # observed continuous spinning. Disabling it removes that discrete mode
+            # entirely: RPP always steers via continuous curvature (angular velocity
+            # proportional to path curvature), which can't get stuck sustaining a
+            # spin the way a discrete mode can.
+            'use_rotate_to_heading': False,
+            'max_angular_accel': 0.8,
+            'max_robot_pose_search_dist': 10.0,
+            'use_interpolation': True,
+            # RPP refuses to command reverse velocity at all unless this is set,
+            # even though SmacPlannerHybrid's REEDS_SHEPP model plans occasional
+            # (heavily reverse_penalty'd) reverse segments -- without this the
+            # controller just can't follow those segments and the robot is stuck
+            # going forward-only.
+            'allow_reversing': False,
+        }
+    else:
+        # DWB's RotateToGoal critic forces PURE ROTATION once within
+        # FollowPath.xy_goal_tolerance of the goal. This MUST be <= the goal checker's
+        # xy tolerance; otherwise the robot flips to rotate-only while still too far in
+        # xy to ever satisfy completion, so it spins forever and never drives the last
+        # stretch (the "controller replans, base doesn't move" deadlock). Keep it equal
+        # so rotate-to-goal begins exactly at the arrival radius.
+        cs['FollowPath']['xy_goal_tolerance'] = cs['general_goal_checker']['xy_goal_tolerance']
+        # Must nearly stop before the final rotate-to-goal, so it settles precisely.
+        cs['FollowPath']['trans_stopped_velocity'] = 0.05
+        # Gentler rotation dynamics: the stock 1.0 rad/s @ 3.2 rad/s^2 overshoots the
+        # yaw window at 20 Hz and hunts back and forth. 0.4 rad/s @ 0.8 rad/s^2 stops
+        # within ~0.1 rad from full rate, so the final alignment settles first try.
+        cs['FollowPath']['max_vel_theta'] = max_angular_vel
+        cs['FollowPath']['acc_lim_theta'] = 0.8
+        cs['FollowPath']['decel_lim_theta'] = -0.8
+    # Keep the velocity smoother's theta limits in lockstep with the controller's, or it
+    # re-clips/re-shapes the commands it already planned for.
     vs = cfg['velocity_smoother']['ros__parameters']
-    vs['max_velocity'] = [0.26, 0.0, 0.4]
-    vs['min_velocity'] = [-0.26, 0.0, -0.4]
+    vs['max_velocity'] = [max_linear_vel, 0.0, max_angular_vel]
+    vs['min_velocity'] = [-max_linear_vel, 0.0, -max_angular_vel]
     vs['max_accel'] = [2.5, 0.0, 0.8]
     vs['max_decel'] = [-2.5, 0.0, -0.8]
 
@@ -143,6 +205,10 @@ def write_okvis_vio_config(source_cfg):
     """
     with open(source_cfg) as f:
         text = f.read()
+    if 'do_loop_closures: false' in text:
+        # Already pure VIO (e.g. the source config was edited directly) -- nothing
+        # to patch, use it as-is.
+        return source_cfg
     patched = text.replace('do_loop_closures: true', 'do_loop_closures: false')
     if patched == text:
         raise RuntimeError('did not find `do_loop_closures: true` in ' + source_cfg)

@@ -4,7 +4,7 @@ from launch import LaunchDescription
 from launch.actions import (DeclareLaunchArgument, GroupAction, IncludeLaunchDescription,
                             LogInfo, RegisterEventHandler, TimerAction)
 from launch.conditions import IfCondition
-from launch.event_handlers import OnProcessExit
+from launch.event_handlers import OnProcessExit, OnShutdown
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_xml.launch_description_sources import XMLLaunchDescriptionSource
@@ -12,6 +12,7 @@ from launch_ros.actions import Node, SetRemap
 from ament_index_python.packages import get_package_share_directory, get_package_share_path
 
 from stretch_nav2.launch_utils import write_okvis_nav_params, write_okvis_vio_config
+from stretch_aruco_localizer import transform_utils as goal_transform_utils
 
 # OKVIS ACCURACY EXPLORATION: single-session, no relocalization.
 #
@@ -59,6 +60,14 @@ def generate_launch_description():
                     "replayed this session (kept separate from real map-associated "
                     "goal files). Stored under $HELLO_FLEET_PATH/maps.")
 
+    settle_sec_param = DeclareLaunchArgument(
+        'settle_sec', default_value='1.0',
+        description="goal_navigator: seconds to wait after NavigateToPose returns "
+                    "before measuring/reporting pos_err/yaw_err against the recorded "
+                    "goal. Nav2's own goal-reached check happens instantly at "
+                    "whatever pose it has right then; set this near 0 to see that "
+                    "same instant instead of pose drift/settle after the fact.")
+
     # Move to the manipulation posture on startup (one-shot). NOTE include_head:=true
     # turns the head camera to the arm, which disables OKVIS VIO while turned.
     startup_posture_param = DeclareLaunchArgument(
@@ -84,9 +93,15 @@ def generate_launch_description():
     # the stock fixed-origin-(0,0) global costmap would leave the robot stranded
     # outside its bounds the moment it drives negative in x/y. Make it follow the
     # robot instead.
+    # use_rpp_controller:=True -- Regulated Pure Pursuit instead of DWB; smoother
+    # tracking of SmacPlannerHybrid's curved final approach arcs, no discrete
+    # rotate-in-place switchover near the goal (see module docstring).
+    # max_linear_vel/max_angular_vel lowered from the 0.26 m/s / 0.4 rad/s
+    # stock/production caps -- this is a slow, careful accuracy check, not a speed run.
     okvis_nav_params = write_okvis_nav_params(
         source_params, wait_only_bt, wait_only_bt_through,
-        rolling_global_costmap=True)
+        rolling_global_costmap=True, use_rpp_controller=True,
+        max_linear_vel=0.05, max_angular_vel=0.2)
 
     # Loop closures OFF: patch do_loop_closures:true -> false in a temp copy of the
     # stock OKVIS config (pure VIO; see module docstring).
@@ -226,7 +241,24 @@ def generate_launch_description():
     goal_navigator = Node(
         package='stretch_aruco_localizer', executable='goal_navigator',
         name='goal_navigator', output='screen',
-        parameters=[{'map_name': map_name}])
+        parameters=[{'map_name': map_name,
+                     'settle_sec': LaunchConfiguration('settle_sec')}])
+
+    # Goals recorded this session are keyed off map==odom==world==THIS session's
+    # start pose (no relocalization ties them to anything more durable) -- they are
+    # meaningless once the robot restarts at a different pose next session. Wipe the
+    # sidecar on shutdown so a future run doesn't silently try to navigate to stale
+    # coordinates from a different start pose.
+    def _clear_session_goals(event, context):
+        resolved_map_name = LaunchConfiguration('map_name').perform(context)
+        maps_dir = os.path.join(
+            os.environ.get('HELLO_FLEET_PATH', '/home/hello-robot/stretch_user'), 'maps')
+        path = os.path.join(maps_dir, f'{resolved_map_name}_goals.yaml')
+        if os.path.exists(path):
+            goal_transform_utils.save_goals(path, [], map_name=resolved_map_name)
+
+    clear_goals_on_shutdown = RegisterEventHandler(
+        OnShutdown(on_shutdown=_clear_session_goals))
 
     return LaunchDescription([
         rviz_param,
@@ -234,6 +266,7 @@ def generate_launch_description():
         declare_use_sim_time_argument,
         autostart_param,
         map_name_param,
+        settle_sec_param,
         startup_posture_param,
         include_head_param,
         # OKVIS odometry stack
@@ -255,4 +288,5 @@ def generate_launch_description():
         # goal recording + replay
         goal_recorder,
         goal_navigator,
+        clear_goals_on_shutdown,
     ])
