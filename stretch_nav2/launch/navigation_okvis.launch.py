@@ -139,7 +139,7 @@ def generate_launch_description():
                     "staging_enable is true, or every goto stops "
                     "staging_offset_m short of the goal.")
     xy_correct_tolerance_m_param = DeclareLaunchArgument(
-        'xy_correct_tolerance_m', default_value='0.03',
+        'xy_correct_tolerance_m', default_value='0.015',
         description='goal_navigator: xy trim stops once within this many meters.')
     final_approach_mode_param = DeclareLaunchArgument(
         'final_approach_mode', default_value='joint',
@@ -182,7 +182,7 @@ def generate_launch_description():
         'yaw_correct_vel', default_value='0.1',
         description='goal_navigator: fixed |angular.z| (rad/s) used while trimming yaw.')
     yaw_correct_timeout_sec_param = DeclareLaunchArgument(
-        'yaw_correct_timeout_sec', default_value='6.0',
+        'yaw_correct_timeout_sec', default_value='5.0',
         description='goal_navigator: safety cutoff for the yaw trim rotation.')
 
     wall_square_enable_param = DeclareLaunchArgument(
