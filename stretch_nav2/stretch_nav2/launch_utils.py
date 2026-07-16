@@ -161,7 +161,7 @@ def write_okvis_nav_params(source_params, bt_nav_to_pose, bt_nav_through_poses,
         p = cfg[scope][scope]['ros__parameters']
         # Inflation kept > the 0.22 m inscribed radius but well below the 0.55 default
         # so DWB can use lab passages that are physically safe for Stretch.
-        p['inflation_layer']['inflation_radius'] = 0.1
+        p['inflation_layer']['inflation_radius'] = 0.25
         # OKVIS's 6-DoF pose can put the floor lidar a few cm below odom z=0; start the
         # voxel column below zero so the scan still raytraces and clears stale cells.
         p['voxel_layer']['origin_z'] = -0.10
