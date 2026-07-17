@@ -221,6 +221,13 @@ def generate_launch_description():
         description='reloc:=aruco/apriltag(_amcl): have the active board detector '
                     'publish its annotated ~/debug_image (drawn markers/tags) for tuning')
 
+    gripper_camera_param = DeclareLaunchArgument(
+        'gripper_camera', default_value='false', choices=['true', 'false'],
+        description="Also launch the wrist-mounted D405 camera (stretch_core's "
+                    "d405_basic.launch.py) under the gripper_camera/ namespace -- "
+                    "topics gripper_camera/color/..., gripper_camera/aligned_depth_to_color/... "
+                    "Independent of the head D435i/OKVIS camera stream above.")
+
     use_sim_time = LaunchConfiguration('use_sim_time')
     autostart = LaunchConfiguration('autostart')
     map_yaml = LaunchConfiguration('map')
@@ -397,6 +404,18 @@ def generate_launch_description():
                 'config_file': realsense_params_file,
             }.items()),
     ])
+
+    # gripper_camera:=true -> also bring up the wrist D405 (separate USB device from
+    # the head D435i above, disambiguated via device_type in d405_basic.launch.py's
+    # own rs_launch.py include). Uses that launch file's own defaults
+    # (camera_name='gripper_camera', device_type='d405'), so topics land under
+    # gripper_camera/color/..., gripper_camera/aligned_depth_to_color/... . Unrelated
+    # to OKVIS/reloc -- this is just visual feedback for manipulation, not consumed
+    # by anything in this launch file.
+    gripper_camera_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            [stretch_core_path, '/launch/d405_basic.launch.py']),
+        condition=IfCondition(LaunchConfiguration('gripper_camera')))
 
     # Anchor odom == base_link(t=0) on the floor (see map_anchor.py). This makes
     # odom->world->base_link a proper odometry chain rooted at the session start pose.
@@ -651,11 +670,13 @@ def generate_launch_description():
         startup_posture_param,
         include_head_param,
         publish_debug_image_param,
+        gripper_camera_param,
         # OKVIS odometry stack
         stretch_driver_launch,
         rplidar_launch,
         base_teleop_launch,
         realsense_launch,
+        gripper_camera_launch,
         okvis_nav_tf_bridge,
         okvis_after_posture,
         okvis_no_posture,
