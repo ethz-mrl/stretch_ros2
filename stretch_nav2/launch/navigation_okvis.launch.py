@@ -270,11 +270,15 @@ def generate_launch_description():
         PythonExpression(["'", reloc, "' in ('aruco', 'aruco_amcl')"]))
     use_apriltag_detect = IfCondition(
         PythonExpression(["'", reloc, "' in ('apriltag', 'apriltag_amcl')"]))
-    # map_server serves the saved grid for the costmap static layer under amcl,
-    # amcl_oneshot, and all four board-reloc modes (all navigate in the saved map).
-    # 'aruco'/'apriltag' just don't run AMCL.
+    # map_server serves the saved grid for the costmap static layer -- every reloc
+    # mode navigates in the saved map, including 'none' (map == this session's
+    # start pose, but the static occupancy grid is the same saved lab01.yaml/.pgm
+    # either way). Without it here, the global costmap never gets a static layer
+    # at all and falls back to a tiny default rolling window at the origin,
+    # making any real goal unplannable ("no map received" / "out of bounds of
+    # the costmap", confirmed on hardware 2026-07-17).
     use_map_server = IfCondition(PythonExpression(
-        ["'", reloc, "' in ('amcl', 'amcl_oneshot', 'aruco', 'aruco_amcl', "
+        ["'", reloc, "' in ('amcl', 'amcl_oneshot', 'none', 'aruco', 'aruco_amcl', "
                     "'apriltag', 'apriltag_amcl')"]))
     # RealSense color + aligned depth are needed for any board-anchored reloc mode
     # (the detector consumes /camera/color + /camera/aligned_depth_to_color). Off
@@ -450,18 +454,19 @@ def generate_launch_description():
                    '--roll', '0', '--pitch', '0', '--yaw', '0',
                    '--frame-id', 'map', '--child-frame-id', 'odom'])
 
-    # reloc:=aruco/apriltag -> a fixed board anchors map->odom. map_server (above,
-    # under use_map_server) serves the grid; this lifecycle activates it WITHOUT AMCL,
-    # and aruco_relocalizer/apriltag_relocalizer owns map->odom from the recorded
-    # anchor. The anchor sidecar is <map>_anchor.yaml (same basename as the loaded
-    # map). The detector needs the color + aligned-depth streams enabled above
-    # (aruco_stream).
-    use_board_only_reloc = IfCondition(
-        PythonExpression(["'", reloc, "' in ('aruco', 'apriltag')"]))
-    aruco_localization_lifecycle = Node(
+    # reloc:=none/aruco/apriltag all need map_server (above, under use_map_server)
+    # lifecycle-activated WITHOUT AMCL: 'none' just needs the static map served for
+    # costmaps/planning (map->odom itself comes from map_to_odom_identity above);
+    # 'aruco'/'apriltag' additionally have aruco_relocalizer/apriltag_relocalizer
+    # own map->odom from the recorded anchor (<map>_anchor.yaml, same basename as
+    # the loaded map; needs the color + aligned-depth streams enabled above via
+    # aruco_stream).
+    use_map_server_no_amcl = IfCondition(
+        PythonExpression(["'", reloc, "' in ('none', 'aruco', 'apriltag')"]))
+    non_amcl_localization_lifecycle = Node(
         package='nav2_lifecycle_manager', executable='lifecycle_manager',
         name='lifecycle_manager_localization', output='screen',
-        condition=use_board_only_reloc,
+        condition=use_map_server_no_amcl,
         parameters=[{'use_sim_time': use_sim_time, 'autostart': autostart,
                      'node_names': ['map_server']}])
 
@@ -662,7 +667,7 @@ def generate_launch_description():
         localization_lifecycle,
         amcl_freeze,
         map_to_odom_identity,
-        aruco_localization_lifecycle,
+        non_amcl_localization_lifecycle,
         aruco_detect,
         aruco_relocalizer,
         aruco_amcl_bridge,
