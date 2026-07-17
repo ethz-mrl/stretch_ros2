@@ -39,21 +39,33 @@ def generate_launch_description():
         default_value='false',
         description='Use simulation/Gazebo clock')
 
-    # Optional Phase-1 ArUco anchor recording. When record_anchor:=true, additionally
-    # run the ArUco detector (needs color + aligned depth, enabled below) and the
-    # aruco_anchor_recorder. Park facing the fixed marker and call the
-    # /record_anchor service before saving the map; it writes <map_name>_anchor.yaml
-    # that reloc:=aruco later consumes. Default false keeps plain OKVIS mapping intact.
+    # Optional Phase-1 anchor recording. When record_anchor:=true, additionally
+    # run a board/marker detector (needs color + aligned depth, enabled below) and
+    # its matching anchor_recorder, chosen by anchor_detector. Park facing the
+    # fixed board and call the /record_anchor service before saving the map; it
+    # writes <map_name>_anchor.yaml that reloc:=<anchor_detector> later consumes.
+    # Default false keeps plain OKVIS mapping intact.
     record_anchor_param = DeclareLaunchArgument(
-        'record_anchor', default_value='false', choices=['true', 'false'],
-        description='Also run the ArUco anchor recorder during mapping')
+        'record_anchor', default_value='true', choices=['true', 'false'],
+        description='Also run a board/marker anchor recorder during mapping')
+    anchor_detector_param = DeclareLaunchArgument(
+        'anchor_detector', default_value='aruco', choices=['aruco', 'apriltag'],
+        description="Which detector to run for anchor recording when "
+                    "record_anchor:=true: 'aruco' (6x4 ChArUco board, "
+                    "stretch_aruco_localizer) or 'apriltag' (6x6 AprilTag grid "
+                    "board, stretch_apriltag_localizer). Should match the "
+                    "reloc:=<...> value used later at mission time.")
     marker_name_param = DeclareLaunchArgument(
         'marker_name', default_value='map_anchor',
-        description="ArUco marker NAME (from stretch_marker_dict.yaml) to anchor on "
-                    "(default 'map_anchor', the 5x5 id-777 entry)")
+        description="TF frame name the chosen detector publishes the board pose as, "
+                    "and that anchor_recorder anchors on (default 'map_anchor').")
     map_name_param = DeclareLaunchArgument(
         'map_name', default_value=os.environ.get('MAP_NAME', 'map'),
         description='Basename for the anchor sidecar (<map_name>_anchor.yaml)')
+    publish_debug_image_param = DeclareLaunchArgument(
+        'publish_debug_image', default_value='false', choices=['true', 'false'],
+        description='Have the active anchor detector publish its annotated '
+                    '~/debug_image (drawn markers/tags) for tuning')
 
     # Move to the manipulation posture on startup (one-shot). The driver runs in
     # gamepad mode here, which does NOT accept joint trajectory goals, so the posture
@@ -69,13 +81,28 @@ def generate_launch_description():
                     'the arm; breaks OKVIS while turned)')
 
     record_anchor = LaunchConfiguration('record_anchor')
+    anchor_detector = LaunchConfiguration('anchor_detector')
     marker_name = LaunchConfiguration('marker_name')
     map_name = LaunchConfiguration('map_name')
-    use_anchor = IfCondition(PythonExpression(["'", record_anchor, "' == 'true'"]))
-    # Color + aligned depth are needed only when recording an anchor (the detector
-    # consumes them); off otherwise so OKVIS keeps the IR/IMU bandwidth to itself.
+    publish_debug_image = LaunchConfiguration('publish_debug_image')
+    use_aruco_anchor = IfCondition(PythonExpression(
+        ["'", record_anchor, "' == 'true' and '", anchor_detector, "' == 'aruco'"]))
+    use_apriltag_anchor = IfCondition(PythonExpression(
+        ["'", record_anchor, "' == 'true' and '", anchor_detector, "' == 'apriltag'"]))
+    # Color + aligned depth are needed only when recording an anchor (either
+    # detector consumes them); off otherwise so OKVIS keeps the IR/IMU bandwidth
+    # to itself.
     anchor_stream = PythonExpression(
         ["'true' if '", record_anchor, "' == 'true' else 'false'"])
+    # 1280x720 gives more pixels-per-marker than 640x480 for both anchor
+    # detectors (confirmed on hardware for the AprilTag grid board: 640x480
+    # sometimes decoded 0/36 tags in a session where a 1280x720 grab of the
+    # same board decoded roughly half). Color is unused by OKVIS either way
+    # (it reads the IR streams), so bumping it doesn't cost OKVIS anything.
+    # Only takes effect when record_anchor:=true (anchor_stream gates
+    # enable_color); irrelevant otherwise.
+    color_profile = PythonExpression([
+        "'1280,720,15' if '", record_anchor, "' == 'true' else '640,480,15'"])
 
     # Wheel-odometry TF disabled: OKVIS is the only state estimator. The driver
     # still publishes the /odom topic and the URDF (robot_state_publisher).
@@ -134,10 +161,10 @@ def generate_launch_description():
                 'enable_color': anchor_stream,
                 'enable_depth': anchor_stream,
                 'align_depth.enable': anchor_stream,
-                # Keep color low-res to relieve USB/CPU load so OKVIS doesn't drop
-                # frames / lag (default color is 1280x720x30). 640x480x15 still
-                # detects a 150 mm marker at close relocalization range.
-                'rgb_camera.color_profile': '640,480,15',
+                # Color resolution is bumped (see color_profile above) only when
+                # recording an anchor; 15 fps (vs default 1280x720x30) still keeps
+                # USB/CPU load down for OKVIS's IR streams.
+                'rgb_camera.color_profile': color_profile,
                 'enable_infra1': 'true',
                 'enable_infra2': 'true',
                 'depth_module.infra_profile': '640,480,15',
@@ -210,24 +237,38 @@ def generate_launch_description():
         }],
         remappings=[('cloud_in', '/lidar_cloud')])
 
-    # Phase-1 anchor recording (only when record_anchor:=true).
+    # Phase-1 anchor recording (only when record_anchor:=true), detector chosen by
+    # anchor_detector. Both publish the board pose as TF camera_color_optical_frame
+    # -> <marker_name>, which the matching anchor_recorder consumes identically;
+    # only one pair is ever active (mutually exclusive conditions).
+
     # ChArUco board detector (replaces the single-marker stretch_core detector).
-    # Publishes the board pose as TF camera_color_optical_frame -> <marker_name>,
-    # which aruco_anchor_recorder consumes exactly as before. Board is 6 columns x
-    # 4 rows, 66 mm squares, 49 mm markers, DICT_4X4.
+    # Board is 6 columns x 4 rows, 66 mm squares, 49 mm markers, DICT_4X4.
     aruco_detect = Node(
         package='stretch_aruco_localizer', executable='charuco_detector',
-        name='charuco_detector', output='screen', condition=use_anchor,
+        name='charuco_detector', output='screen', condition=use_aruco_anchor,
         parameters=[{
             'squares_x': 6, 'squares_y': 4,
             'square_length_m': 0.066, 'marker_length_m': 0.049,
             'aruco_dict': 'DICT_4X4_50', 'legacy_pattern': True,
             'min_charuco_corners': 4,
             'marker_name': marker_name,
+            'publish_debug_image': publish_debug_image,
         }])
     aruco_anchor_recorder = Node(
         package='stretch_aruco_localizer', executable='aruco_anchor_recorder',
-        name='aruco_anchor_recorder', output='screen', condition=use_anchor,
+        name='aruco_anchor_recorder', output='screen', condition=use_aruco_anchor,
+        parameters=[{'marker_name': marker_name, 'map_name': map_name}])
+
+    # AprilTag grid-board detector: 6x6 grid, 88 mm tags, 26.4 mm separation,
+    # DICT_APRILTAG_36H11 (defaults already match this rig; not overridden here).
+    apriltag_detect = Node(
+        package='stretch_apriltag_localizer', executable='apriltag_grid_detector',
+        name='apriltag_grid_detector', output='screen', condition=use_apriltag_anchor,
+        parameters=[{'marker_name': marker_name, 'publish_debug_image': publish_debug_image}])
+    apriltag_anchor_recorder = Node(
+        package='stretch_apriltag_localizer', executable='apriltag_anchor_recorder',
+        name='apriltag_anchor_recorder', output='screen', condition=use_apriltag_anchor,
         parameters=[{'marker_name': marker_name, 'map_name': map_name}])
 
     # Demo-goal recording is always available during mapping (needs only the
@@ -286,8 +327,10 @@ def generate_launch_description():
         teleop_type,
         declare_use_sim_time_argument,
         record_anchor_param,
+        anchor_detector_param,
         marker_name_param,
         map_name_param,
+        publish_debug_image_param,
         startup_posture_param,
         include_head_param,
         stretch_driver_launch,
@@ -303,6 +346,8 @@ def generate_launch_description():
         octomap_server,
         aruco_detect,
         aruco_anchor_recorder,
+        apriltag_detect,
+        apriltag_anchor_recorder,
         goal_recorder,
         startup_posture,
     ])

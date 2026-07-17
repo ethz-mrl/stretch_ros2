@@ -75,29 +75,35 @@ def generate_launch_description():
 
     reloc_param = DeclareLaunchArgument(
         'reloc', default_value='aruco',
-        choices=['amcl', 'amcl_oneshot', 'none', 'hloc', 'aruco', 'aruco_amcl'],
+        choices=['amcl', 'amcl_oneshot', 'none', 'hloc', 'aruco', 'aruco_amcl',
+                 'apriltag', 'apriltag_amcl'],
         description="How map->odom (relocalization) is provided: 'amcl' (lidar vs "
                     "saved grid, continuous), 'amcl_oneshot' (AMCL corrects the initial "
                     "2D Pose Estimate ONCE, then freezes map->odom so OKVIS carries a "
                     "smooth pose with no further jumps), 'none' (identity static; "
-                    "map == start pose), 'aruco' (a fixed ArUco marker anchors "
-                    "map->odom; requires a recorded <map>_anchor.yaml sidecar), or "
+                    "map == start pose), 'aruco' (a fixed ChArUco board anchors "
+                    "map->odom; requires a recorded <map>_anchor.yaml sidecar), "
                     "'aruco_amcl' (AMCL owns map->odom as in 'amcl', but a confident "
                     "board sighting periodically re-seeds AMCL's belief via "
-                    "/initialpose -- joint lidar + board relocalization)")
+                    "/initialpose -- joint lidar + board relocalization), 'apriltag' "
+                    "(same as 'aruco' but anchored on the AprilTag grid board instead "
+                    "of the ChArUco board -- must match the anchor_detector used when "
+                    "the map's anchor sidecar was recorded), or 'apriltag_amcl' (the "
+                    "AprilTag counterpart of 'aruco_amcl')")
 
-    # For reloc:=aruco. marker_name defaults empty -> the relocalizer uses the name
-    # stored in the anchor sidecar. aruco_mode picks single_shot vs periodic.
+    # For reloc:=aruco/apriltag. marker_name defaults empty -> the relocalizer uses
+    # the name stored in the anchor sidecar. aruco_mode picks single_shot vs periodic
+    # (applies to both board types -- name kept for backward compat with 'aruco').
     marker_name_param = DeclareLaunchArgument(
         'marker_name', default_value='map_anchor',
-        description="reloc:=aruco: marker NAME from stretch_marker_dict.yaml to anchor "
-                    "on (default 'map_anchor', the 5x5 id-777 entry). Empty => use the "
-                    "name recorded in the anchor sidecar.")
+        description="reloc:=aruco/apriltag: marker/board NAME to anchor on (default "
+                    "'map_anchor'). Empty => use the name recorded in the anchor "
+                    "sidecar.")
     aruco_mode_param = DeclareLaunchArgument(
         'aruco_mode', default_value='single_shot',
         choices=['single_shot', 'periodic'],
-        description="reloc:=aruco: 'single_shot' (fix once, freeze) or 'periodic' "
-                    "(re-anchor on every fresh sighting to bound VIO drift)")
+        description="reloc:=aruco/apriltag: 'single_shot' (fix once, freeze) or "
+                    "'periodic' (re-anchor on every fresh sighting to bound VIO drift)")
 
     # goal_recorder / goal_navigator: same record-once / replay-on-demand pair as
     # navigation_okvis_explore.launch.py, here keyed off the real, persistent map
@@ -210,6 +216,11 @@ def generate_launch_description():
         description='Include head pan/tilt in the startup posture (points camera at '
                     'the arm; breaks OKVIS/ArUco while turned)')
 
+    publish_debug_image_param = DeclareLaunchArgument(
+        'publish_debug_image', default_value='true', choices=['true', 'false'],
+        description='reloc:=aruco/apriltag(_amcl): have the active board detector '
+                    'publish its annotated ~/debug_image (drawn markers/tags) for tuning')
+
     use_sim_time = LaunchConfiguration('use_sim_time')
     autostart = LaunchConfiguration('autostart')
     map_yaml = LaunchConfiguration('map')
@@ -217,6 +228,7 @@ def generate_launch_description():
     marker_name = LaunchConfiguration('marker_name')
     aruco_mode = LaunchConfiguration('aruco_mode')
     map_name = LaunchConfiguration('map_name')
+    publish_debug_image = LaunchConfiguration('publish_debug_image')
 
     # ALL OKVIS-navigation param overrides live here (see _write_okvis_nav_params):
     # goal tolerances, inflation, wait-only recovery + BT-xml, and voxel origin_z. The
@@ -238,30 +250,45 @@ def generate_launch_description():
         source_params, wait_only_bt, wait_only_bt_through,
         use_rpp_controller=True, max_linear_vel=0.05, max_angular_vel=0.05)
 
-    # map_server + AMCL run for amcl, amcl_oneshot AND aruco_amcl (all lidar-vs-grid
-    # localization via AMCL); oneshot additionally runs amcl_freeze, which deactivates
-    # AMCL after it converges. aruco_amcl additionally runs the ChArUco detector +
-    # aruco_amcl_bridge below, which nudges AMCL's belief via /initialpose.
-    use_amcl = IfCondition(
-        PythonExpression(["'", reloc, "' in ('amcl', 'amcl_oneshot', 'aruco_amcl')"]))
+    # map_server + AMCL run for amcl, amcl_oneshot, aruco_amcl AND apriltag_amcl (all
+    # lidar-vs-grid localization via AMCL); oneshot additionally runs amcl_freeze,
+    # which deactivates AMCL after it converges. The *_amcl variants additionally run
+    # their board detector + *_amcl_bridge below, which nudges AMCL's belief via
+    # /initialpose.
+    use_amcl = IfCondition(PythonExpression(
+        ["'", reloc, "' in ('amcl', 'amcl_oneshot', 'aruco_amcl', 'apriltag_amcl')"]))
     use_oneshot = IfCondition(PythonExpression(["'", reloc, "' == 'amcl_oneshot'"]))
     no_reloc = IfCondition(PythonExpression(["'", reloc, "' == 'none'"]))
     use_aruco = IfCondition(PythonExpression(["'", reloc, "' == 'aruco'"]))
     use_aruco_amcl = IfCondition(PythonExpression(["'", reloc, "' == 'aruco_amcl'"]))
+    use_apriltag = IfCondition(PythonExpression(["'", reloc, "' == 'apriltag'"]))
+    use_apriltag_amcl = IfCondition(PythonExpression(["'", reloc, "' == 'apriltag_amcl'"]))
     # ChArUco board detector is needed by BOTH 'aruco' (owns map->odom outright) and
-    # 'aruco_amcl' (only nudges AMCL's belief).
+    # 'aruco_amcl' (only nudges AMCL's belief). AprilTag grid detector mirrors this
+    # for 'apriltag' / 'apriltag_amcl'.
     use_charuco = IfCondition(
         PythonExpression(["'", reloc, "' in ('aruco', 'aruco_amcl')"]))
+    use_apriltag_detect = IfCondition(
+        PythonExpression(["'", reloc, "' in ('apriltag', 'apriltag_amcl')"]))
     # map_server serves the saved grid for the costmap static layer under amcl,
-    # amcl_oneshot, aruco AND aruco_amcl (all navigate in the saved map). aruco just
-    # doesn't run AMCL.
-    use_map_server = IfCondition(
-        PythonExpression(["'", reloc, "' in ('amcl', 'amcl_oneshot', 'aruco', 'aruco_amcl')"]))
-    # RealSense color + aligned depth are needed for aruco AND aruco_amcl
-    # (detect_aruco_markers consumes /camera/color + /camera/aligned_depth_to_color).
-    # Off otherwise so OKVIS keeps the IR/IMU bandwidth to itself.
+    # amcl_oneshot, and all four board-reloc modes (all navigate in the saved map).
+    # 'aruco'/'apriltag' just don't run AMCL.
+    use_map_server = IfCondition(PythonExpression(
+        ["'", reloc, "' in ('amcl', 'amcl_oneshot', 'aruco', 'aruco_amcl', "
+                    "'apriltag', 'apriltag_amcl')"]))
+    # RealSense color + aligned depth are needed for any board-anchored reloc mode
+    # (the detector consumes /camera/color + /camera/aligned_depth_to_color). Off
+    # otherwise so OKVIS keeps the IR/IMU bandwidth to itself.
     aruco_stream = PythonExpression(
-        ["'true' if '", reloc, "' in ('aruco', 'aruco_amcl') else 'false'"])
+        ["'true' if '", reloc, "' in ('aruco', 'aruco_amcl', 'apriltag', 'apriltag_amcl') "
+                    "else 'false'"])
+    # AprilTag's 36 small (88 mm) tags need far more pixels-per-tag than the single
+    # ChArUco board's 49 mm squares; bump color resolution only for the AprilTag reloc
+    # modes (mirrors offline_okvis_mapping.launch.py's color_profile logic). Color is
+    # unused by OKVIS either way (it reads the IR streams).
+    color_profile = PythonExpression(
+        ["'1280,720,15' if '", reloc, "' in ('apriltag', 'apriltag_amcl') "
+                    "else '640,480,15'"])
 
     # ---------------- OKVIS state-estimation stack (from offline_okvis_mapping) ----
     # Wheel-odom TF stays OFF: OKVIS is the only odometry. Driver still publishes the
@@ -345,10 +372,10 @@ def generate_launch_description():
                 'enable_color': aruco_stream,
                 'enable_depth': aruco_stream,
                 'align_depth.enable': aruco_stream,
-                # Keep color low-res to relieve USB/CPU load so OKVIS doesn't drop
-                # frames / lag (default color is 1280x720x30). 640x480x15 still
-                # detects a 150 mm marker at close relocalization range.
-                'rgb_camera.color_profile': '640,480,15',
+                # Color resolution is bumped (see color_profile above) only for the
+                # AprilTag reloc modes; 15 fps (vs default 1280x720x30) still keeps
+                # USB/CPU load down for OKVIS's IR streams.
+                'rgb_camera.color_profile': color_profile,
                 'enable_infra1': 'true',
                 'enable_infra2': 'true',
                 'depth_module.infra_profile': '640,480,15',
@@ -423,14 +450,18 @@ def generate_launch_description():
                    '--roll', '0', '--pitch', '0', '--yaw', '0',
                    '--frame-id', 'map', '--child-frame-id', 'odom'])
 
-    # reloc:=aruco -> a fixed ArUco marker anchors map->odom. map_server (above, under
-    # use_map_server) serves the grid; this lifecycle activates it WITHOUT AMCL, and
-    # aruco_relocalizer owns map->odom from the recorded anchor. The anchor sidecar is
-    # <map>_anchor.yaml (same basename as the loaded map). detect_aruco_markers needs
-    # the color + aligned-depth streams enabled above (aruco_stream).
+    # reloc:=aruco/apriltag -> a fixed board anchors map->odom. map_server (above,
+    # under use_map_server) serves the grid; this lifecycle activates it WITHOUT AMCL,
+    # and aruco_relocalizer/apriltag_relocalizer owns map->odom from the recorded
+    # anchor. The anchor sidecar is <map>_anchor.yaml (same basename as the loaded
+    # map). The detector needs the color + aligned-depth streams enabled above
+    # (aruco_stream).
+    use_board_only_reloc = IfCondition(
+        PythonExpression(["'", reloc, "' in ('aruco', 'apriltag')"]))
     aruco_localization_lifecycle = Node(
         package='nav2_lifecycle_manager', executable='lifecycle_manager',
-        name='lifecycle_manager_localization', output='screen', condition=use_aruco,
+        name='lifecycle_manager_localization', output='screen',
+        condition=use_board_only_reloc,
         parameters=[{'use_sim_time': use_sim_time, 'autostart': autostart,
                      'node_names': ['map_server']}])
 
@@ -447,6 +478,7 @@ def generate_launch_description():
             'aruco_dict': 'DICT_4X4_50', 'legacy_pattern': True,
             'min_charuco_corners': 4,
             'marker_name': marker_name,
+            'publish_debug_image': publish_debug_image,
         }])
 
     anchor_yaml_path = PythonExpression(
@@ -465,6 +497,31 @@ def generate_launch_description():
     aruco_amcl_bridge = Node(
         package='stretch_aruco_localizer', executable='aruco_amcl_bridge',
         name='aruco_amcl_bridge', output='screen', condition=use_aruco_amcl,
+        parameters=[{'use_sim_time': use_sim_time,
+                     'anchor_yaml_path': anchor_yaml_path,
+                     'marker_name': marker_name}])
+
+    # reloc:=apriltag/apriltag_amcl -> AprilTag-grid counterpart of the aruco_detect /
+    # aruco_relocalizer / aruco_amcl_bridge trio above. apriltag_grid_detector
+    # publishes the same camera_color_optical_frame -> <marker_name> TF that
+    # apriltag_relocalizer / apriltag_amcl_bridge consume. 6x6 grid, 88 mm tags,
+    # DICT_APRILTAG_36H11 (rig defaults, not overridden here).
+    apriltag_detect = Node(
+        package='stretch_apriltag_localizer', executable='apriltag_grid_detector',
+        name='apriltag_grid_detector', output='screen', condition=use_apriltag_detect,
+        parameters=[{'marker_name': marker_name, 'publish_debug_image': publish_debug_image}])
+
+    apriltag_relocalizer = Node(
+        package='stretch_apriltag_localizer', executable='apriltag_relocalizer',
+        name='apriltag_relocalizer', output='screen', condition=use_apriltag,
+        parameters=[{'use_sim_time': use_sim_time,
+                     'anchor_yaml_path': anchor_yaml_path,
+                     'marker_name': marker_name,
+                     'mode': aruco_mode}])
+
+    apriltag_amcl_bridge = Node(
+        package='stretch_apriltag_localizer', executable='apriltag_amcl_bridge',
+        name='apriltag_amcl_bridge', output='screen', condition=use_apriltag_amcl,
         parameters=[{'use_sim_time': use_sim_time,
                      'anchor_yaml_path': anchor_yaml_path,
                      'marker_name': marker_name}])
@@ -588,6 +645,7 @@ def generate_launch_description():
         wall_square_tolerance_deg_param,
         startup_posture_param,
         include_head_param,
+        publish_debug_image_param,
         # OKVIS odometry stack
         stretch_driver_launch,
         rplidar_launch,
@@ -608,6 +666,9 @@ def generate_launch_description():
         aruco_detect,
         aruco_relocalizer,
         aruco_amcl_bridge,
+        apriltag_detect,
+        apriltag_relocalizer,
+        apriltag_amcl_bridge,
         startup_posture,
         # navigation
         navigation_launch,
