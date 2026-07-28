@@ -32,9 +32,14 @@ def generate_launch_description():
     autostart = LaunchConfiguration("autostart")
     params_file = LaunchConfiguration("params_file")
 
+    # map_server/amcl are intentionally excluded: nav2_bringup's localization_launch.py
+    # (included separately by bringup_launch.py) already configures and activates them
+    # under its own lifecycle_manager_localization. Listing them here too makes this
+    # manager try to CONFIGURE them a second time while they're already `active`, which
+    # is an invalid lifecycle transition - it fails and aborts this manager's entire
+    # bringup, leaving controller_server/planner_server/behavior_server/bt_navigator
+    # stuck `unconfigured` forever.
     lifecycle_nodes = [
-        "map_server",
-        "amcl",
         "controller_server",
         "planner_server",
         "behavior_server",
