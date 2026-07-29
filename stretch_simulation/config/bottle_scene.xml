@@ -2546,4 +2546,14 @@
     </body>
   </worldbody>
 
+  <equality>
+    <!-- Inactive until GraspManager grasps the object: it sets eq_data (relative pose)
+         and flips eq_active on, so the solver rigidly welds the object to the gripper.
+         body1 must be the gripper attachment point (the reference frame for MuJoCo's
+         weld) and body2 the object (located relative to body1 via eq_data).
+         coffee_machine_left_group_main has no weld here: it's only a teleport prop in
+         this scene, not something the Pick behavior should ever rigidly attach. -->
+    <weld name="grasp_obj_main" body1="link_grasp_center" body2="obj_main" active="false" solref="0.005 1"/>
+  </equality>
+
   </mujoco>

@@ -2546,4 +2546,12 @@
     </body>
   </worldbody>
 
+  <equality>
+    <!-- Inactive until GraspManager grasps the object: it sets eq_data (relative pose)
+         and flips eq_active on, so the solver rigidly welds the object to the gripper.
+         body1 must be the gripper attachment point (the reference frame for MuJoCo's
+         weld) and body2 the object (located relative to body1 via eq_data). -->
+    <weld name="grasp_distr_counter_main" body1="link_grasp_center" body2="distr_counter_main" active="false" solref="0.005 1"/>
+  </equality>
+
   </mujoco>
