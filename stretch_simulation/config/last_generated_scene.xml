@@ -2578,7 +2578,7 @@
       <site name="paper_towel_right_group_default_site" pos="0 0 0" size="0.0007" rgba="1 0 0 0" />
     </body>
     <body name="obj_main" pos="1.0888591725169106 -0.3063090168516699 1.0350000000000001" quat="0.9667275 0.0 0.0 0.25580844">
-      <joint name="obj_joint0" type="free" limited="false" actuatorfrclimited="false" damping="0.0005" />
+      <joint name="obj_joint0" type="free" limited="false" actuatorfrclimited="false" damping="1.0" />
       <geom name="obj_g0" type="mesh" contype="0" conaffinity="0" group="1" friction="0.95 0.3 0.1" solref="0.001 2" solimp="0.998 0.998" density="100" material="obj_SM_WaterBottle_MAT" mesh="obj_model_normalized_0_vis" />
       <geom name="obj_g1" type="mesh" friction="0.95 0.3 0.1" solref="0.001 2" solimp="0.998 0.998" density="100" rgba="0.8 0.8 0.8 0" mesh="obj_model_normalized_collision_22._coll" />
       <geom name="obj_g2" type="mesh" friction="0.95 0.3 0.1" solref="0.001 2" solimp="0.998 0.998" density="100" rgba="0.8 0.8 0.8 0" mesh="obj_model_normalized_collision_23._coll" />
@@ -2615,7 +2615,7 @@
       <site name="obj_default_site" pos="0 0 0" size="0.003" rgba="1 0 0 0" />
     </body>
     <body name="distr_counter_main" pos="1.1144275831063712 -0.16334768760098817 0.9598366502180006" quat="0.99991494 0.0 0.0 0.013043052">
-      <joint name="distr_counter_joint0" type="free" limited="false" actuatorfrclimited="false" damping="0.0005" />
+      <joint name="distr_counter_joint0" type="free" limited="false" actuatorfrclimited="false" damping="1.0" />
       <geom name="distr_counter_g0" type="mesh" contype="0" conaffinity="0" group="1" friction="0.95 0.3 0.1" solref="0.001 2" solimp="0.998 0.998" density="100" material="distr_counter_Mushroom_Top" mesh="distr_counter_model_normalized_0_vis" />
       <geom name="distr_counter_g1" type="mesh" contype="0" conaffinity="0" group="1" friction="0.95 0.3 0.1" solref="0.001 2" solimp="0.998 0.998" density="100" material="distr_counter_Mushroom_Stem" mesh="distr_counter_model_normalized_1_vis" />
       <geom name="distr_counter_g2" type="mesh" friction="0.95 0.3 0.1" solref="0.001 2" solimp="0.998 0.998" density="100" rgba="0.8 0.8 0.8 0" mesh="distr_counter_model_normalized_collision_22._coll" />
@@ -2653,7 +2653,7 @@
       <site name="distr_counter_default_site" pos="0 0 0" size="0.0024" rgba="1 0 0 0" />
     </body>
     <body name="distr_cab_main" pos="1.3142015606153028 -0.12994103369359777 1.4800000009999998" quat="0.9880542 0.0 0.0 0.15410659">
-      <joint name="distr_cab_joint0" type="free" limited="false" actuatorfrclimited="false" damping="0.0005" />
+      <joint name="distr_cab_joint0" type="free" limited="false" actuatorfrclimited="false" damping="1.0" />
       <geom name="distr_cab_g0" type="mesh" contype="0" conaffinity="0" group="1" friction="0.95 0.3 0.1" solref="0.001 2" solimp="0.998 0.998" density="100" material="distr_cab_Material.065" mesh="distr_cab_model_normalized_0_vis" />
       <geom name="distr_cab_g1" type="mesh" contype="0" conaffinity="0" group="1" friction="0.95 0.3 0.1" solref="0.001 2" solimp="0.998 0.998" density="100" material="distr_cab_Material.064" mesh="distr_cab_model_normalized_1_vis" />
       <geom name="distr_cab_g2" type="mesh" friction="0.95 0.3 0.1" solref="0.001 2" solimp="0.998 0.998" density="100" rgba="0.8 0.8 0.8 0" mesh="distr_cab_model_normalized_collision_22._coll" />
