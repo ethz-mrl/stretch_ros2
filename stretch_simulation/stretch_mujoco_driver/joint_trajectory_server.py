@@ -34,6 +34,13 @@ class JointTrajectoryAction:
             callback_group=node.main_group,
         )
         self.timeout = 0.2  # seconds
+
+        # How long to wait for an actuator to settle before aborting the goal.
+        # This only applies to the MuJoCo sim driver (this class), not the real
+        # robot's stretch_core driver, so it's safe to be more lenient here than
+        # the default 10s in stretch_mujoco's wait_while_is_moving/wait_until_at_setpoint.
+        self._wait_timeout = 20.0  # seconds
+
         self.last_goal_time = self.node.get_clock().now().to_msg()
 
         self.latest_goal_id = 0
@@ -140,9 +147,20 @@ class JointTrajectoryAction:
 
             for actuator in actuators_in_use:
                 if actuator in (Actuators.base_translate.name, Actuators.base_rotate.name):
-                    self.node.sim.wait_while_is_moving(actuator)
+                    reached = self.node.sim.wait_while_is_moving(actuator, timeout=self._wait_timeout)
                 else:
-                    self.node.sim.wait_until_at_setpoint(actuator)
+                    reached = self.node.sim.wait_until_at_setpoint(actuator, timeout=self._wait_timeout)
+
+                if not reached:
+                    result = FollowJointTrajectory.Result()
+                    result.error_code = FollowJointTrajectory.Result.PATH_TOLERANCE_VIOLATED
+                    result.error_string = (
+                        f"Joint '{actuator}' did not reach its commanded target "
+                        "before timing out (it may be obstructed)."
+                    )
+                    self.node.get_logger().error(result.error_string)
+                    goal_handle.abort()
+                    return result
 
             # Simulate wait until point.time_from_start
             # self._wait_until(
