@@ -228,6 +228,15 @@ def generate_launch_description():
                     "topics gripper_camera/color/..., gripper_camera/aligned_depth_to_color/... "
                     "Independent of the head D435i/OKVIS camera stream above.")
 
+    head_camera_color_param = DeclareLaunchArgument(
+        'head_camera_color', default_value='false', choices=['true', 'false'],
+        description="Enable the head D435i's color + aligned-depth streams "
+                    "(/camera/color/..., /camera/aligned_depth_to_color/...) even "
+                    "when reloc doesn't need them itself (e.g. reloc:=none/amcl) -- "
+                    "useful for visual monitoring/teleop. Board-anchored reloc "
+                    "modes (aruco/aruco_amcl/apriltag/apriltag_amcl) already "
+                    "enable these regardless of this flag.")
+
     use_sim_time = LaunchConfiguration('use_sim_time')
     autostart = LaunchConfiguration('autostart')
     map_yaml = LaunchConfiguration('map')
@@ -289,17 +298,20 @@ def generate_launch_description():
                     "'apriltag', 'apriltag_amcl')"]))
     # RealSense color + aligned depth are needed for any board-anchored reloc mode
     # (the detector consumes /camera/color + /camera/aligned_depth_to_color). Off
-    # otherwise so OKVIS keeps the IR/IMU bandwidth to itself.
-    aruco_stream = PythonExpression(
-        ["'true' if '", reloc, "' in ('aruco', 'aruco_amcl', 'apriltag', 'apriltag_amcl') "
+    # otherwise so OKVIS keeps the IR/IMU bandwidth to itself -- unless the operator
+    # explicitly asks for the head color feed anyway via head_camera_color:=true
+    # (e.g. for visual monitoring/teleop under reloc:=none, which needs no board).
+    enable_head_color = PythonExpression(
+        ["'true' if ('", reloc, "' in ('aruco', 'aruco_amcl', 'apriltag', 'apriltag_amcl') "
+                    "or '", LaunchConfiguration('head_camera_color'), "' == 'true') "
                     "else 'false'"])
     # AprilTag's 36 small (88 mm) tags need far more pixels-per-tag than the single
     # ChArUco board's 49 mm squares; bump color resolution only for the AprilTag reloc
     # modes (mirrors offline_okvis_mapping.launch.py's color_profile logic). Color is
     # unused by OKVIS either way (it reads the IR streams).
     color_profile = PythonExpression(
-        ["'1280,720,15' if '", reloc, "' in ('apriltag', 'apriltag_amcl') "
-                    "else '640,480,15'"])
+        ["'1280x720x15' if '", reloc, "' in ('apriltag', 'apriltag_amcl') "
+                    "else '640x480x15'"])
 
     # ---------------- OKVIS state-estimation stack (from offline_okvis_mapping) ----
     # Wheel-odom TF stays OFF: OKVIS is the only odometry. Driver still publishes the
@@ -379,22 +391,23 @@ def generate_launch_description():
             launch_arguments={
                 'camera_namespace': '',
                 'camera_name': 'camera',
-                # color + depth + aligned-depth only for reloc:=aruco (ArUco detection).
-                'enable_color': aruco_stream,
-                'enable_depth': aruco_stream,
-                'align_depth.enable': aruco_stream,
+                # color + depth + aligned-depth for board-anchored reloc (ArUco/AprilTag
+                # detection) or whenever head_camera_color:=true is set explicitly.
+                'enable_color': enable_head_color,
+                'enable_depth': enable_head_color,
+                'align_depth.enable': enable_head_color,
                 # Color resolution is bumped (see color_profile above) only for the
                 # AprilTag reloc modes; 15 fps (vs default 1280x720x30) still keeps
                 # USB/CPU load down for OKVIS's IR streams.
                 'rgb_camera.color_profile': color_profile,
                 'enable_infra1': 'true',
                 'enable_infra2': 'true',
-                'depth_module.infra_profile': '640,480,15',
+                'depth_module.infra_profile': '640x480x15',
                 # Depth shares the one D435i stereo module with infra1/2, so its
                 # profile MUST match the infra profile (res + fps) or the driver
                 # brings up IR and silently drops depth. Without depth, the ArUco
                 # detector's color+depth TimeSynchronizer never fires.
-                'depth_module.depth_profile': '640,480,15',
+                'depth_module.depth_profile': '640x480x15',
                 'depth_module.infra1_format': 'Y8',
                 'depth_module.infra2_format': 'Y8',
                 'enable_gyro': 'true',
@@ -412,10 +425,19 @@ def generate_launch_description():
     # gripper_camera/color/..., gripper_camera/aligned_depth_to_color/... . Unrelated
     # to OKVIS/reloc -- this is just visual feedback for manipulation, not consumed
     # by anything in this launch file.
-    gripper_camera_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            [stretch_core_path, '/launch/d405_basic.launch.py']),
-        condition=IfCondition(LaunchConfiguration('gripper_camera')))
+    # Delayed a few seconds behind the head camera: starting both realsense2_camera_node
+    # processes at once races librealsense's USB device enumeration -- if the D405 hasn't
+    # been enumerated yet when its node starts scanning, it can briefly latch onto the
+    # already-running head D435i instead ("Device or resource busy" on VIDIOC_S_FMT),
+    # which then crashes the head camera's node (observed on hardware: "free(): corrupted
+    # unsorted chunks", exit code -6). A short delay lets USB enumeration settle first.
+    gripper_camera_delay_sec = 5.0
+    gripper_camera_launch = TimerAction(
+        period=gripper_camera_delay_sec,
+        actions=[IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                [stretch_core_path, '/launch/d405_basic.launch.py']),
+            condition=IfCondition(LaunchConfiguration('gripper_camera')))])
 
     # Anchor odom == base_link(t=0) on the floor (see map_anchor.py). This makes
     # odom->world->base_link a proper odometry chain rooted at the session start pose.
@@ -479,7 +501,7 @@ def generate_launch_description():
     # 'aruco'/'apriltag' additionally have aruco_relocalizer/apriltag_relocalizer
     # own map->odom from the recorded anchor (<map>_anchor.yaml, same basename as
     # the loaded map; needs the color + aligned-depth streams enabled above via
-    # aruco_stream).
+    # enable_head_color).
     use_map_server_no_amcl = IfCondition(
         PythonExpression(["'", reloc, "' in ('none', 'aruco', 'apriltag')"]))
     non_amcl_localization_lifecycle = Node(
@@ -671,6 +693,7 @@ def generate_launch_description():
         include_head_param,
         publish_debug_image_param,
         gripper_camera_param,
+        head_camera_color_param,
         # OKVIS odometry stack
         stretch_driver_launch,
         rplidar_launch,

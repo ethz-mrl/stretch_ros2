@@ -102,7 +102,7 @@ def generate_launch_description():
     # Only takes effect when record_anchor:=true (anchor_stream gates
     # enable_color); irrelevant otherwise.
     color_profile = PythonExpression([
-        "'1280,720,15' if '", record_anchor, "' == 'true' else '640,480,15'"])
+        "'1280x720x15' if '", record_anchor, "' == 'true' else '640x480x15'"])
 
     # Wheel-odometry TF disabled: OKVIS is the only state estimator. The driver
     # still publishes the /odom topic and the URDF (robot_state_publisher).
@@ -167,12 +167,12 @@ def generate_launch_description():
                 'rgb_camera.color_profile': color_profile,
                 'enable_infra1': 'true',
                 'enable_infra2': 'true',
-                'depth_module.infra_profile': '640,480,15',
+                'depth_module.infra_profile': '640x480x15',
                 # Depth shares the one D435i stereo module with infra1/2, so its
                 # profile MUST match the infra profile (res + fps) or the driver
                 # brings up IR and silently drops depth. Without depth, the ArUco
                 # detector's color+depth TimeSynchronizer never fires.
-                'depth_module.depth_profile': '640,480,15',
+                'depth_module.depth_profile': '640x480x15',
                 'depth_module.infra1_format': 'Y8',
                 'depth_module.infra2_format': 'Y8',
                 'enable_gyro': 'true',
