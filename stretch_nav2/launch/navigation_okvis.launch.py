@@ -309,9 +309,10 @@ def generate_launch_description():
     # ChArUco board's 49 mm squares; bump color resolution only for the AprilTag reloc
     # modes (mirrors offline_okvis_mapping.launch.py's color_profile logic). Color is
     # unused by OKVIS either way (it reads the IR streams).
-    color_profile = PythonExpression(
-        ["'1280x720x15' if '", reloc, "' in ('apriltag', 'apriltag_amcl') "
-                    "else '640x480x15'"])
+    # color_profile = PythonExpression(
+    #     ["'1280x720x15' if '", reloc, "' in ('apriltag', 'apriltag_amcl') "
+    #                 "else '640x480x15'"])
+    color_profile = '640x480x15'
 
     # ---------------- OKVIS state-estimation stack (from offline_okvis_mapping) ----
     # Wheel-odom TF stays OFF: OKVIS is the only odometry. Driver still publishes the
