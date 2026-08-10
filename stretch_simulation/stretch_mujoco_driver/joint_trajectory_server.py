@@ -36,10 +36,10 @@ class JointTrajectoryAction:
         self.timeout = 0.2  # seconds
 
         # How long to wait for an actuator to settle before aborting the goal.
-        # This only applies to the MuJoCo sim driver (this class), not the real
-        # robot's stretch_core driver, so it's safe to be more lenient here than
-        # the default 10s in stretch_mujoco's wait_while_is_moving/wait_until_at_setpoint.
-        self._wait_timeout = 20.0  # seconds
+        # This only applies to the MuJoCo sim driver (this class);
+        # 45s keeps a genuinely stuck/obstructed base from hanging
+        # forever while giving legitimate moves enough room to finish.
+        self._wait_timeout = 45.0  # seconds
 
         self.last_goal_time = self.node.get_clock().now().to_msg()
 
