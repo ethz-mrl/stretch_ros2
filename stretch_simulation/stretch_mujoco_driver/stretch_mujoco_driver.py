@@ -904,6 +904,14 @@ class StretchMujocoDriver(Node):
         self.sim.move_by(Actuators.gripper, 0.1)
         self.sim.wait_until_at_setpoint(Actuators.gripper)
         self.sim.spawn_object_in_gripper(request.object_name)
+        # Close the gripper around the newly-welded object (mirrors the gripper state
+        # after a real pick+stow) instead of leaving it open. GraspManager only releases
+        # a held object on the rising edge of "gripper just opened"; if the gripper were
+        # left open here, a later open_gripper command during e.g. a place skill would
+        # not be a fresh transition (it was already open since spawn) and would never
+        # trigger the release, leaving the object welded to the gripper forever.
+        self.sim.move_to(Actuators.gripper, -0.1)
+        self.sim.wait_until_at_setpoint(Actuators.gripper)
         response.success = True
         response.message = f"Spawned '{request.object_name}' in gripper."
         return response
